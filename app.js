@@ -10,6 +10,7 @@ class ParametricDrawingApp {
         this.isDrawing = false;
         this.tempShape = null;
         this.selectedEntity = null;
+        this.hoveredEntity = null;
         
         this.entities = [];
         this.constraints = [];
@@ -24,6 +25,9 @@ class ParametricDrawingApp {
         
         this.origin = { x: 0, y: 0 };
         this.settingOrigin = false;
+        
+        this.defaultColors = ['#00ff88', '#ff6b6b', '#4ecdc4', '#ffe66d', '#a8e6cf', '#ffd3b6', '#ffaaa5', '#ff8b94'];
+        this.colorIndex = 0;
         
         this.init();
     }
@@ -80,8 +84,26 @@ class ParametricDrawingApp {
             this.showConstraintDialog();
         });
         
+        document.getElementById('origin-btn').addEventListener('click', () => {
+            this.settingOrigin = true;
+            document.getElementById('tool-status').textContent = 'Setting Origin';
+        });
+        
+        document.getElementById('add-metadata-field').addEventListener('click', () => {
+            this.addMetadataField();
+        });
+        
         this.jsonEditor.addEventListener('input', () => {
             this.handleJSONEdit();
+        });
+        
+        this.jsonEditor.addEventListener('mousemove', (e) => {
+            this.handleJSONHover(e);
+        });
+        
+        this.jsonEditor.addEventListener('mouseleave', () => {
+            this.hoveredEntity = null;
+            this.render();
         });
         
         this.setTool('select');
@@ -235,8 +257,11 @@ class ParametricDrawingApp {
         const entity = {
             id: `entity_${this.idCounter++}`,
             type: shape.type,
-            metadata: {}
+            metadata: {
+                color: this.defaultColors[this.colorIndex % this.defaultColors.length]
+            }
         };
+        this.colorIndex++;
         
         switch (shape.type) {
             case 'line':
@@ -305,12 +330,14 @@ class ParametricDrawingApp {
             if (this.isPointNearEntity(x, y, entity)) {
                 this.selectedEntity = entity.id;
                 this.highlightEntityInJSON(entity.id);
+                this.updateMetadataEditor(entity);
                 break;
             }
         }
         
         if (!this.selectedEntity) {
             this.clearJSONHighlight();
+            this.clearMetadataEditor();
         }
         
         this.render();
@@ -372,6 +399,131 @@ class ParametricDrawingApp {
     clearJSONHighlight() {
         const pos = this.jsonEditor.selectionStart;
         this.jsonEditor.setSelectionRange(pos, pos);
+    }
+    
+    handleJSONHover(e) {
+        const cursorPos = this.jsonEditor.selectionStart;
+        const text = this.jsonEditor.value;
+        const lines = text.substring(0, cursorPos).split('\n');
+        const lineNumber = lines.length - 1;
+        const allLines = text.split('\n');
+        
+        let entityId = null;
+        let searchStart = Math.max(0, lineNumber - 10);
+        let searchEnd = Math.min(allLines.length, lineNumber + 10);
+        
+        for (let i = searchStart; i < searchEnd; i++) {
+            const line = allLines[i];
+            const match = line.match(/"id"\s*:\s*"(entity_\d+)"/);
+            if (match) {
+                entityId = match[1];
+                break;
+            }
+        }
+        
+        if (entityId !== this.hoveredEntity) {
+            this.hoveredEntity = entityId;
+            this.render();
+        }
+    }
+    
+    updateMetadataEditor(entity) {
+        const container = document.getElementById('entity-metadata');
+        const addButton = document.getElementById('add-metadata-field');
+        
+        container.innerHTML = `
+            <div class="metadata-field">
+                <label>Entity ID</label>
+                <input type="text" value="${entity.id}" readonly style="opacity: 0.7">
+            </div>
+            <div class="metadata-field">
+                <label>Type</label>
+                <input type="text" value="${entity.type}" readonly style="opacity: 0.7">
+            </div>
+            <div class="metadata-field">
+                <label>Color</label>
+                <div class="color-input-wrapper">
+                    <input type="color" id="color-picker" value="${entity.metadata?.color || '#00ff88'}">
+                    <input type="text" id="color-text" value="${entity.metadata?.color || '#00ff88'}" 
+                           placeholder="#hex or color name">
+                </div>
+            </div>
+        `;
+        
+        Object.keys(entity.metadata || {}).forEach(key => {
+            if (key !== 'color') {
+                const field = document.createElement('div');
+                field.className = 'metadata-field';
+                field.innerHTML = `
+                    <label>${key}</label>
+                    <input type="text" data-field="${key}" value="${entity.metadata[key]}">
+                `;
+                container.appendChild(field);
+            }
+        });
+        
+        addButton.style.display = 'block';
+        
+        document.getElementById('color-picker').addEventListener('input', (e) => {
+            this.updateEntityColor(entity.id, e.target.value);
+            document.getElementById('color-text').value = e.target.value;
+        });
+        
+        document.getElementById('color-text').addEventListener('change', (e) => {
+            this.updateEntityColor(entity.id, e.target.value);
+            if (e.target.value.startsWith('#')) {
+                document.getElementById('color-picker').value = e.target.value;
+            }
+        });
+        
+        container.querySelectorAll('input[data-field]').forEach(input => {
+            input.addEventListener('change', (e) => {
+                const fieldName = e.target.dataset.field;
+                this.updateEntityMetadata(entity.id, fieldName, e.target.value);
+            });
+        });
+    }
+    
+    clearMetadataEditor() {
+        const container = document.getElementById('entity-metadata');
+        const addButton = document.getElementById('add-metadata-field');
+        
+        container.innerHTML = '<div class="no-selection">Select an entity to edit metadata</div>';
+        addButton.style.display = 'none';
+    }
+    
+    updateEntityColor(entityId, color) {
+        const entity = this.entities.find(e => e.id === entityId);
+        if (entity) {
+            if (!entity.metadata) entity.metadata = {};
+            entity.metadata.color = color;
+            this.updateJSON();
+            this.render();
+        }
+    }
+    
+    updateEntityMetadata(entityId, field, value) {
+        const entity = this.entities.find(e => e.id === entityId);
+        if (entity) {
+            if (!entity.metadata) entity.metadata = {};
+            entity.metadata[field] = value;
+            this.updateJSON();
+        }
+    }
+    
+    addMetadataField() {
+        if (!this.selectedEntity) return;
+        
+        const fieldName = prompt('Enter field name:');
+        if (fieldName && fieldName.trim()) {
+            const entity = this.entities.find(e => e.id === this.selectedEntity);
+            if (entity) {
+                if (!entity.metadata) entity.metadata = {};
+                entity.metadata[fieldName] = '';
+                this.updateJSON();
+                this.updateMetadataEditor(entity);
+            }
+        }
     }
     
     isPointNearEntity(x, y, entity) {
@@ -583,8 +735,11 @@ class ParametricDrawingApp {
     drawEntities() {
         this.entities.forEach(entity => {
             const isSelected = entity.id === this.selectedEntity;
-            this.ctx.strokeStyle = isSelected ? '#0088ff' : '#00ff88';
-            this.ctx.lineWidth = isSelected ? 2 : 1;
+            const isHovered = entity.id === this.hoveredEntity;
+            
+            const color = entity.metadata?.color || '#00ff88';
+            this.ctx.strokeStyle = isSelected ? '#0088ff' : (isHovered ? '#ffaa00' : color);
+            this.ctx.lineWidth = (isSelected || isHovered) ? 2 : 1;
             
             this.drawEntity(entity);
         });
