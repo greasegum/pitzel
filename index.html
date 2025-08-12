@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Parametric Drawing Editor</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <div class="panel left-panel">
+            <div class="toolbar">
+                <button class="tool-btn" data-tool="select" title="Select">
+                    <svg width="20" height="20" viewBox="0 0 20 20">
+                        <path d="M3 3 L12 12 L8 13 L7 17 L5 15 L3 17 Z" fill="currentColor"/>
+                    </svg>
+                </button>
+                <button class="tool-btn" data-tool="line" title="Line">
+                    <svg width="20" height="20" viewBox="0 0 20 20">
+                        <line x1="3" y1="17" x2="17" y2="3" stroke="currentColor" stroke-width="2"/>
+                    </svg>
+                </button>
+                <button class="tool-btn" data-tool="polyline" title="Polyline">
+                    <svg width="20" height="20" viewBox="0 0 20 20">
+                        <polyline points="3,17 7,7 13,13 17,3" stroke="currentColor" stroke-width="2" fill="none"/>
+                    </svg>
+                </button>
+                <button class="tool-btn" data-tool="rectangle" title="Rectangle">
+                    <svg width="20" height="20" viewBox="0 0 20 20">
+                        <rect x="3" y="5" width="14" height="10" stroke="currentColor" stroke-width="2" fill="none"/>
+                    </svg>
+                </button>
+                <button class="tool-btn" data-tool="circle" title="Circle">
+                    <svg width="20" height="20" viewBox="0 0 20 20">
+                        <circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="2" fill="none"/>
+                    </svg>
+                </button>
+                <button class="tool-btn" data-tool="arc" title="Arc">
+                    <svg width="20" height="20" viewBox="0 0 20 20">
+                        <path d="M 3 17 A 10 10 0 0 0 17 3" stroke="currentColor" stroke-width="2" fill="none"/>
+                    </svg>
+                </button>
+                <div class="separator"></div>
+                <button class="tool-btn" id="clear-btn" title="Clear">Clear</button>
+                <button class="tool-btn" id="export-btn" title="Export">Export</button>
+            </div>
+            <canvas id="drawing-canvas"></canvas>
+            <div class="status-bar">
+                <span id="coords">0, 0</span>
+                <span id="tool-status">Select</span>
+            </div>
+        </div>
+        <div class="panel right-panel">
+            <div class="json-header">
+                <h3>JSON Representation</h3>
+                <button id="format-json">Format</button>
+                <button id="validate-json">Validate</button>
+            </div>
+            <textarea id="json-editor" spellcheck="false"></textarea>
+            <div class="metadata-panel">
+                <h4>Constraints</h4>
+                <div id="constraints-list"></div>
+                <button id="add-constraint">Add Constraint</button>
+            </div>
+        </div>
+    </div>
+    <script src="app.js"></script>
+</body>
+</html>
