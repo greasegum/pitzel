@@ -190,3 +190,87 @@ body {
     stroke: #4a4a4a;
     stroke-width: 1;
 }
+
+.separator-line {
+    height: 1px;
+    background: #444;
+    margin: 15px 0;
+}
+
+.metadata-editor {
+    margin-bottom: 10px;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.no-selection {
+    padding: 10px;
+    color: #888;
+    font-size: 12px;
+    text-align: center;
+}
+
+.metadata-field {
+    margin-bottom: 10px;
+}
+
+.metadata-field label {
+    display: block;
+    font-size: 11px;
+    color: #aaa;
+    margin-bottom: 3px;
+}
+
+.metadata-field input,
+.metadata-field select {
+    width: 100%;
+    padding: 4px 8px;
+    background: #333;
+    border: 1px solid #555;
+    color: #e0e0e0;
+    border-radius: 3px;
+    font-size: 12px;
+}
+
+.metadata-field input:focus,
+.metadata-field select:focus {
+    outline: none;
+    border-color: #0088ff;
+}
+
+.color-input-wrapper {
+    display: flex;
+    gap: 5px;
+}
+
+.color-input-wrapper input[type="color"] {
+    width: 40px;
+    height: 28px;
+    padding: 2px;
+    cursor: pointer;
+}
+
+.color-input-wrapper input[type="text"] {
+    flex: 1;
+}
+
+#add-metadata-field {
+    background: #444;
+    border: 1px solid #555;
+    color: #e0e0e0;
+    padding: 6px 12px;
+    cursor: pointer;
+    border-radius: 4px;
+    font-size: 12px;
+    width: 100%;
+    margin-bottom: 10px;
+}
+
+#add-metadata-field:hover {
+    background: #555;
+}
+
+.json-highlight {
+    background: #0088ff33;
+    outline: 2px solid #0088ff;
+}

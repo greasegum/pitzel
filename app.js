@@ -17,9 +17,13 @@ class ParametricDrawingApp {
         
         this.mousePos = { x: 0, y: 0 };
         this.gridPos = { x: 0, y: 0 };
+        this.snapIndicator = null;
         
         this.polylinePoints = [];
         this.isDrawingPolyline = false;
+        
+        this.origin = { x: 0, y: 0 };
+        this.settingOrigin = false;
         
         this.init();
     }
@@ -107,15 +111,15 @@ class ParametricDrawingApp {
     
     normalizeCoordinates(x, y) {
         return {
-            x: x / this.canvas.width,
-            y: y / this.canvas.height
+            x: (x - this.origin.x) / this.canvas.width,
+            y: (y - this.origin.y) / this.canvas.height
         };
     }
     
     denormalizeCoordinates(x, y) {
         return {
-            x: x * this.canvas.width,
-            y: y * this.canvas.height
+            x: x * this.canvas.width + this.origin.x,
+            y: y * this.canvas.height + this.origin.y
         };
     }
     
@@ -124,6 +128,14 @@ class ParametricDrawingApp {
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
         const gridPos = this.snapToGrid(x, y);
+        
+        if (this.settingOrigin) {
+            this.origin = { ...gridPos };
+            this.settingOrigin = false;
+            this.setTool('select');
+            this.render();
+            return;
+        }
         
         if (this.currentTool === 'select') {
             this.selectEntity(x, y);
@@ -153,12 +165,20 @@ class ParametricDrawingApp {
         this.mousePos = { x, y };
         this.gridPos = this.snapToGrid(x, y);
         
+        const worldX = this.gridPos.x - this.origin.x;
+        const worldY = this.gridPos.y - this.origin.y;
         document.getElementById('coords').textContent = 
-            `${Math.round(this.gridPos.x)}, ${Math.round(this.gridPos.y)}`;
+            `${Math.round(worldX)}, ${Math.round(worldY)}`;
         
         if (this.isDrawing && this.tempShape) {
             this.tempShape.end = this.gridPos;
         }
+        
+        const dist = Math.sqrt(
+            Math.pow(this.gridPos.x - x, 2) + 
+            Math.pow(this.gridPos.y - y, 2)
+        );
+        this.snapIndicator = dist < this.snapThreshold ? this.gridPos : null;
         
         this.render();
     }
@@ -284,11 +304,74 @@ class ParametricDrawingApp {
             const entity = this.entities[i];
             if (this.isPointNearEntity(x, y, entity)) {
                 this.selectedEntity = entity.id;
+                this.highlightEntityInJSON(entity.id);
                 break;
             }
         }
         
+        if (!this.selectedEntity) {
+            this.clearJSONHighlight();
+        }
+        
         this.render();
+    }
+    
+    highlightEntityInJSON(entityId) {
+        try {
+            const data = JSON.parse(this.jsonEditor.value);
+            const entityIndex = data.entities.findIndex(e => e.id === entityId);
+            
+            if (entityIndex !== -1) {
+                const lines = this.jsonEditor.value.split('\n');
+                let currentLine = 0;
+                let entityStartLine = -1;
+                let entityEndLine = -1;
+                let inEntity = false;
+                let braceCount = 0;
+                
+                for (let i = 0; i < lines.length; i++) {
+                    if (lines[i].includes(`"id": "${entityId}"`) || 
+                        lines[i].includes(`"id":"${entityId}"`)) {
+                        entityStartLine = i;
+                        while (entityStartLine > 0 && !lines[entityStartLine].includes('{')) {
+                            entityStartLine--;
+                        }
+                        inEntity = true;
+                        braceCount = 1;
+                    }
+                    
+                    if (inEntity) {
+                        for (let char of lines[i]) {
+                            if (char === '{') braceCount++;
+                            if (char === '}') braceCount--;
+                        }
+                        
+                        if (braceCount === 0) {
+                            entityEndLine = i;
+                            break;
+                        }
+                    }
+                }
+                
+                if (entityStartLine !== -1 && entityEndLine !== -1) {
+                    const start = lines.slice(0, entityStartLine).join('\n').length + entityStartLine;
+                    const end = lines.slice(0, entityEndLine + 1).join('\n').length + entityEndLine;
+                    
+                    this.jsonEditor.focus();
+                    this.jsonEditor.setSelectionRange(start, end);
+                    
+                    const scrollRatio = entityStartLine / lines.length;
+                    this.jsonEditor.scrollTop = scrollRatio * this.jsonEditor.scrollHeight;
+                }
+            }
+        } catch (e) {
+            console.error('Error highlighting JSON:', e);
+        }
+    }
+    
+    clearJSONHighlight() {
+        const pos = this.jsonEditor.selectionStart;
+        this.jsonEditor.setSelectionRange(pos, pos);
     }
     
     isPointNearEntity(x, y, entity) {
@@ -390,6 +473,7 @@ class ParametricDrawingApp {
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
         
         this.drawGrid();
+        this.drawOrigin();
         this.drawEntities();
         
         if (this.tempShape) {
@@ -399,6 +483,65 @@ class ParametricDrawingApp {
         if (this.isDrawingPolyline && this.polylinePoints.length > 0) {
             this.drawTempPolyline();
         }
+        
+        if (this.snapIndicator) {
+            this.drawSnapIndicator();
+        }
+        
+        if (this.settingOrigin) {
+            this.drawOriginCursor();
+        }
+    }
+    
+    drawOrigin() {
+        this.ctx.strokeStyle = '#ff0000';
+        this.ctx.lineWidth = 2;
+        
+        this.ctx.beginPath();
+        this.ctx.moveTo(this.origin.x - 10, this.origin.y);
+        this.ctx.lineTo(this.origin.x + 10, this.origin.y);
+        this.ctx.stroke();
+        
+        this.ctx.beginPath();
+        this.ctx.moveTo(this.origin.x, this.origin.y - 10);
+        this.ctx.lineTo(this.origin.x, this.origin.y + 10);
+        this.ctx.stroke();
+    }
+    
+    drawSnapIndicator() {
+        this.ctx.fillStyle = '#ffff00';
+        this.ctx.strokeStyle = '#ffff00';
+        this.ctx.lineWidth = 2;
+        
+        this.ctx.beginPath();
+        this.ctx.arc(this.snapIndicator.x, this.snapIndicator.y, 5, 0, Math.PI * 2);
+        this.ctx.stroke();
+        
+        this.ctx.beginPath();
+        this.ctx.arc(this.snapIndicator.x, this.snapIndicator.y, 2, 0, Math.PI * 2);
+        this.ctx.fill();
+    }
+    
+    drawOriginCursor() {
+        this.ctx.strokeStyle = '#ff00ff';
+        this.ctx.lineWidth = 2;
+        this.ctx.setLineDash([5, 5]);
+        
+        this.ctx.beginPath();
+        this.ctx.moveTo(this.gridPos.x - 15, this.gridPos.y);
+        this.ctx.lineTo(this.gridPos.x + 15, this.gridPos.y);
+        this.ctx.stroke();
+        
+        this.ctx.beginPath();
+        this.ctx.moveTo(this.gridPos.x, this.gridPos.y - 15);
+        this.ctx.lineTo(this.gridPos.x, this.gridPos.y + 15);
+        this.ctx.stroke();
+        
+        this.ctx.setLineDash([]);
+        
+        this.ctx.fillStyle = '#ff00ff';
+        this.ctx.font = '12px sans-serif';
+        this.ctx.fillText('Click to set origin', this.gridPos.x + 20, this.gridPos.y - 5);
     }
     
     drawGrid() {
