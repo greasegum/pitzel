@@ -548,30 +548,41 @@ class ParametricDrawingApp {
                         this.addToSelection(entity.id, null);
                     }
                 } else {
-                    // Single selection
+                    // Single selection - clear previous selections
+                    this.selectedItems = [];
+                    
                     if (this.selectedEntity === entity.id && entity.type === 'polyline') {
                         const segment = this.getSegmentAt(worldX, worldY, entity);
                         if (segment !== null) {
                             this.selectedSegment = segment;
                             this.selectedItems = [{entityId: entity.id, segmentIndex: segment}];
                             this.updateSegmentMetadataEditor(entity, segment);
+                        } else {
+                            this.selectedEntity = entity.id;
+                            this.selectedSegment = null;
+                            this.selectedItems = [{entityId: entity.id, segmentIndex: null}];
+                            this.updateMetadataEditor(entity);
                         }
                     } else {
-                        this.selectEntity(entity);
+                        this.selectedEntity = entity.id;
                         this.selectedSegment = null;
                         this.selectedItems = [{entityId: entity.id, segmentIndex: null}];
+                        this.updateMetadataEditor(entity);
                     }
                     
                     this.isDragging = true;
                     this.dragStart = { ...gridPos };
                     this.dragEntity = entity;
                     this.canvas.style.cursor = 'move';
+                    this.render();
                 }
             } else {
                 if (!this.isMultiSelecting) {
-                    this.selectEntity(null);
+                    this.selectedEntity = null;
                     this.selectedSegment = null;
                     this.selectedItems = [];
+                    this.clearMetadataEditor();
+                    this.render();
                 }
             }
         } else if (this.currentTool === 'polyline') {
@@ -610,7 +621,11 @@ class ParametricDrawingApp {
         
         const worldX = Math.round((this.gridPos.x - this.origin.x) / this.gridSize);
         const worldY = Math.round((this.gridPos.y - this.origin.y) / this.gridSize);
-        document.getElementById('coords').textContent = `${worldX}, ${worldY}`;
+        let coordText = `${worldX}, ${worldY}`;
+        if (this.selectedItems.length > 1) {
+            coordText += ` | 🔗 ${this.selectedItems.length} selected`;
+        }
+        document.getElementById('coords').textContent = coordText;
         
         if (this.isDragging && this.dragEntity) {
             const dx = (this.gridPos.x - this.dragStart.x) / this.gridSize;
@@ -683,6 +698,11 @@ class ParametricDrawingApp {
         // Track shift key for multi-selection
         this.isMultiSelecting = e.shiftKey;
         
+        // Update status display for shift mode
+        if (e.shiftKey && this.currentTool === 'select') {
+            document.getElementById('tool-status').textContent = 'Multi-Select (Shift)';
+        }
+        
         // Prevent default for our shortcuts
         if ((e.ctrlKey || e.metaKey) && ['z', 'y', 'c', 'v', 'd'].includes(e.key.toLowerCase())) {
             e.preventDefault();
@@ -746,6 +766,9 @@ class ParametricDrawingApp {
     handleKeyUp(e) {
         if (e.key === 'Shift') {
             this.isMultiSelecting = false;
+            if (this.currentTool === 'select') {
+                document.getElementById('tool-status').textContent = 'Select';
+            }
         }
         if (e.key === ' ') {
             this.isPanning = false;
@@ -758,19 +781,28 @@ class ParametricDrawingApp {
         const shortcuts = `
 Keyboard Shortcuts:
 ━━━━━━━━━━━━━━━━━━
-Ctrl+Z    Undo
-Ctrl+Y    Redo  
-Ctrl+C    Copy entity
-Ctrl+V    Paste entity
-Ctrl+D    Duplicate entity
-Delete    Delete selected
-G         Toggle grid
-D         Toggle dimensions
-Space     Pan view (hold)
-Scroll    Zoom in/out
-ESC       Cancel operation
-C         Close polyline (while drawing)
-H         Show this help
+Selection:
+Shift+Click  Multi-select items
+Delete       Delete selected items
+
+Editing:
+Ctrl+Z       Undo
+Ctrl+Y       Redo  
+Ctrl+C       Copy entity
+Ctrl+V       Paste entity
+Ctrl+D       Duplicate entity
+
+View:
+G            Toggle grid
+D            Toggle dimensions
+Space        Pan view (hold)
+Scroll       Zoom in/out
+
+Drawing:
+ESC          Cancel operation
+C            Close polyline (while drawing)
+
+H            Show this help
         `;
         alert(shortcuts);
     }
@@ -948,6 +980,16 @@ H         Show this help
             this.selectedItems.push({ entityId, segmentIndex });
         }
         
+        // Update the main selected entity for reference
+        if (this.selectedItems.length > 0) {
+            const lastItem = this.selectedItems[this.selectedItems.length - 1];
+            this.selectedEntity = lastItem.entityId;
+            this.selectedSegment = lastItem.segmentIndex;
+        } else {
+            this.selectedEntity = null;
+            this.selectedSegment = null;
+        }
+        
         // Update UI to show multi-selection
         this.updateMultiSelectionUI();
         this.render();
@@ -973,26 +1015,34 @@ H         Show this help
             // Multiple items selected
             container.innerHTML = `
                 <div class="metadata-field">
-                    <label>Selection</label>
-                    <input type="text" value="${this.selectedItems.length} items selected" readonly style="opacity: 0.7">
+                    <label>Multi-Selection</label>
+                    <input type="text" value="${this.selectedItems.length} items selected" readonly style="opacity: 0.7; background: #ff00ff33;">
                 </div>
                 <div class="metadata-field">
-                    <button id="create-constraint-btn" style="width: 100%; padding: 8px; background: #0066cc; border: none; color: white; border-radius: 4px; cursor: pointer;">
-                        Create Constraint
+                    <button id="create-constraint-btn" style="width: 100%; padding: 10px; background: #ff00ff; border: none; color: white; border-radius: 4px; cursor: pointer; font-weight: bold;">
+                        🔗 Create Constraint
                     </button>
                 </div>
                 <div class="metadata-field">
                     <label>Selected Items:</label>
-                    <div style="max-height: 150px; overflow-y: auto; background: #2a2a2a; padding: 5px; border-radius: 3px; font-size: 11px;">
-                        ${this.selectedItems.map(item => {
+                    <div style="max-height: 200px; overflow-y: auto; background: #2a2a2a; padding: 8px; border-radius: 3px; font-size: 11px; border: 1px solid #ff00ff55;">
+                        ${this.selectedItems.map((item, index) => {
                             const entity = this.entities.find(e => e.id === item.entityId);
+                            const icon = entity?.type === 'line' ? '━' :
+                                        entity?.type === 'circle' ? '○' :
+                                        entity?.type === 'rectangle' ? '□' :
+                                        entity?.type === 'polyline' ? '⟨⟩' :
+                                        entity?.type === 'arc' ? '⌒' : '•';
                             if (item.segmentIndex !== null && item.segmentIndex !== undefined) {
-                                return `<div>${item.entityId} - Segment ${item.segmentIndex}</div>`;
+                                return `<div style="padding: 2px 0; color: #ff00ff;">${index + 1}. ${icon} ${item.entityId} → Seg ${item.segmentIndex}</div>`;
                             } else {
-                                return `<div>${item.entityId} (${entity?.type})</div>`;
+                                return `<div style="padding: 2px 0; color: #ff00ff;">${index + 1}. ${icon} ${item.entityId} <span style="opacity: 0.6;">(${entity?.type})</span></div>`;
                             }
                         }).join('')}
                     </div>
+                </div>
+                <div class="metadata-field" style="margin-top: 10px;">
+                    <small style="color: #888;">Tip: Shift+Click to add/remove items</small>
                 </div>
             `;
             
@@ -1673,22 +1723,26 @@ H         Show this help
     
     drawEntities() {
         this.entities.forEach(entity => {
-            const isSelected = entity.id === this.selectedEntity;
             const isHovered = entity.id === this.hoveredEntity;
-            const isInMultiSelection = this.selectedItems.some(item => item.entityId === entity.id);
+            const hasSelectedSegments = this.selectedItems.some(item => 
+                item.entityId === entity.id && item.segmentIndex !== null && item.segmentIndex !== undefined
+            );
+            const isWholeEntitySelected = this.selectedItems.some(item => 
+                item.entityId === entity.id && (item.segmentIndex === null || item.segmentIndex === undefined)
+            );
             
-            if (entity.type === 'polyline' && entity.segments && (isSelected || isInMultiSelection || this.hoveredSegmentId?.startsWith(entity.id))) {
-                this.drawPolylineWithSegments(entity, isHovered);
+            if (entity.type === 'polyline' && (hasSelectedSegments || this.hoveredSegmentId?.startsWith(entity.id))) {
+                this.drawPolylineWithSegments(entity, isHovered, isWholeEntitySelected);
             } else {
                 const color = entity.metadata?.color || '#00ff88';
-                this.ctx.strokeStyle = isInMultiSelection ? '#ff00ff' : (isSelected ? '#0088ff' : (isHovered ? '#ffaa00' : color));
-                this.ctx.lineWidth = (isSelected || isHovered || isInMultiSelection) ? 2 / this.zoom : 1 / this.zoom;
+                this.ctx.strokeStyle = isWholeEntitySelected ? '#ff00ff' : (isHovered ? '#ffaa00' : color);
+                this.ctx.lineWidth = (isWholeEntitySelected || isHovered) ? 2 / this.zoom : 1 / this.zoom;
                 this.drawEntity(entity);
             }
         });
     }
     
-    drawPolylineWithSegments(entity, isHovered) {
+    drawPolylineWithSegments(entity, isHovered, isWholeEntitySelected) {
         for (let i = 0; i < entity.points.length - 1; i++) {
             const p1 = this.denormalizeCoordinates(entity.points[i][0], entity.points[i][1]);
             const p2 = this.denormalizeCoordinates(entity.points[i + 1][0], entity.points[i + 1][1]);
@@ -1698,17 +1752,18 @@ H         Show this help
                 segmentColor = entity.segments[i].metadata.color;
             }
             
-            const isSegmentSelected = this.selectedSegment === i && this.selectedEntity === entity.id;
             const isSegmentHovered = this.hoveredSegmentId === `${entity.id}_seg_${i}`;
-            const isInMultiSelection = this.selectedItems.some(item => 
+            const isSegmentInSelection = this.selectedItems.some(item => 
                 item.entityId === entity.id && item.segmentIndex === i
             );
             
-            this.ctx.strokeStyle = isInMultiSelection ? '#ff00ff' :
-                                  (isSegmentSelected ? '#0088ff' : 
+            // Priority: segment selection > whole entity selection > hover > default
+            this.ctx.strokeStyle = isSegmentInSelection ? '#ff00ff' :
+                                  (isWholeEntitySelected ? '#ff00ff' :
                                   (isSegmentHovered ? '#ff8800' :
                                   (isHovered ? '#ffaa00' : segmentColor)));
-            this.ctx.lineWidth = (isSegmentSelected || isSegmentHovered || isInMultiSelection) ? 3 / this.zoom : 2 / this.zoom;
+            this.ctx.lineWidth = (isSegmentInSelection || isWholeEntitySelected || isSegmentHovered) ? 3 / this.zoom : 
+                                (isHovered ? 2 / this.zoom : 1 / this.zoom);
             
             this.ctx.beginPath();
             this.ctx.moveTo(p1.x, p1.y);
@@ -1729,13 +1784,17 @@ H         Show this help
                 segmentColor = entity.segments[lastIndex].metadata.color;
             }
             
-            const isSegmentSelected = this.selectedSegment === lastIndex;
             const isSegmentHovered = this.hoveredSegmentId === `${entity.id}_seg_${lastIndex}`;
+            const isSegmentInSelection = this.selectedItems.some(item => 
+                item.entityId === entity.id && item.segmentIndex === lastIndex
+            );
             
-            this.ctx.strokeStyle = isSegmentSelected ? '#ff00ff' : 
+            this.ctx.strokeStyle = isSegmentInSelection ? '#ff00ff' :
+                                  (isWholeEntitySelected ? '#ff00ff' :
                                   (isSegmentHovered ? '#ff8800' :
-                                  (isHovered ? '#ffaa00' : segmentColor));
-            this.ctx.lineWidth = (isSegmentSelected || isSegmentHovered) ? 3 / this.zoom : 2 / this.zoom;
+                                  (isHovered ? '#ffaa00' : segmentColor)));
+            this.ctx.lineWidth = (isSegmentInSelection || isWholeEntitySelected || isSegmentHovered) ? 3 / this.zoom : 
+                                (isHovered ? 2 / this.zoom : 1 / this.zoom);
             
             this.ctx.beginPath();
             this.ctx.moveTo(last.x, last.y);
