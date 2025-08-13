@@ -232,6 +232,13 @@ body {
     font-size: 12px;
 }
 
+.metadata-field input[type="checkbox"] {
+    width: auto;
+    margin: 0;
+    cursor: pointer;
+    transform: scale(1.2);
+}
+
 .metadata-field input:focus,
 .metadata-field select:focus {
     outline: none;

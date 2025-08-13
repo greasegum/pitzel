@@ -11,7 +11,6 @@ class ParametricDrawingApp {
         this.tempShape = null;
         this.selectedEntity = null;
         this.hoveredEntity = null;
-        this.hoveredSegmentId = null;
         this.selectedSegment = null;
         this.isDragging = false;
         this.dragStart = null;
@@ -34,24 +33,6 @@ class ParametricDrawingApp {
         this.defaultColors = ['#00ff88', '#ff6b6b', '#4ecdc4', '#ffe66d', '#a8e6cf', '#ffd3b6', '#ffaaa5', '#ff8b94'];
         this.colorIndex = 0;
         
-        // Undo/Redo
-        this.undoStack = [];
-        this.redoStack = [];
-        this.maxUndoSteps = 50;
-        
-        // Zoom and Pan
-        this.zoom = 1;
-        this.panOffset = { x: 0, y: 0 };
-        this.isPanning = false;
-        this.panStart = null;
-        
-        // Clipboard
-        this.clipboard = null;
-        
-        // Display options
-        this.showDimensions = true;
-        this.showGrid = true;
-        
         this.init();
     }
     
@@ -60,7 +41,6 @@ class ParametricDrawingApp {
         this.setupEventListeners();
         this.render();
         this.updateJSON();
-        this.displayShortcuts();
     }
     
     setupCanvas() {
@@ -80,7 +60,6 @@ class ParametricDrawingApp {
         this.canvas.addEventListener('mousemove', this.handleMouseMove.bind(this));
         this.canvas.addEventListener('mouseup', this.handleMouseUp.bind(this));
         this.canvas.addEventListener('dblclick', this.handleDoubleClick.bind(this));
-        this.canvas.addEventListener('wheel', this.handleWheel.bind(this));
         document.addEventListener('keydown', this.handleKeyDown.bind(this));
         
         document.querySelectorAll('.tool-btn[data-tool]').forEach(btn => {
@@ -90,7 +69,6 @@ class ParametricDrawingApp {
         });
         
         document.getElementById('clear-btn').addEventListener('click', () => {
-            this.saveState();
             this.clearDrawing();
         });
         
@@ -129,267 +107,10 @@ class ParametricDrawingApp {
         
         this.jsonEditor.addEventListener('mouseleave', () => {
             this.hoveredEntity = null;
-            this.hoveredSegmentId = null;
             this.render();
-        });
-        
-        this.jsonEditor.addEventListener('click', (e) => {
-            this.handleJSONClick(e);
         });
         
         this.setTool('select');
-    }
-    
-    handleWheel(e) {
-        e.preventDefault();
-        const rect = this.canvas.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
-        
-        const zoomDelta = e.deltaY > 0 ? 0.9 : 1.1;
-        const newZoom = Math.min(Math.max(this.zoom * zoomDelta, 0.1), 5);
-        
-        // Zoom towards mouse position
-        const worldX = (x - this.panOffset.x) / this.zoom;
-        const worldY = (y - this.panOffset.y) / this.zoom;
-        
-        this.zoom = newZoom;
-        
-        this.panOffset.x = x - worldX * this.zoom;
-        this.panOffset.y = y - worldY * this.zoom;
-        
-        this.render();
-    }
-    
-    saveState() {
-        const state = {
-            entities: JSON.parse(JSON.stringify(this.entities)),
-            constraints: JSON.parse(JSON.stringify(this.constraints)),
-            idCounter: this.idCounter
-        };
-        
-        this.undoStack.push(state);
-        if (this.undoStack.length > this.maxUndoSteps) {
-            this.undoStack.shift();
-        }
-        this.redoStack = [];
-    }
-    
-    undo() {
-        if (this.undoStack.length > 0) {
-            const currentState = {
-                entities: JSON.parse(JSON.stringify(this.entities)),
-                constraints: JSON.parse(JSON.stringify(this.constraints)),
-                idCounter: this.idCounter
-            };
-            this.redoStack.push(currentState);
-            
-            const previousState = this.undoStack.pop();
-            this.entities = previousState.entities;
-            this.constraints = previousState.constraints;
-            this.idCounter = previousState.idCounter;
-            
-            this.updateJSON();
-            this.render();
-        }
-    }
-    
-    redo() {
-        if (this.redoStack.length > 0) {
-            this.saveState();
-            const nextState = this.redoStack.pop();
-            this.entities = nextState.entities;
-            this.constraints = nextState.constraints;
-            this.idCounter = nextState.idCounter;
-            
-            this.updateJSON();
-            this.render();
-        }
-    }
-    
-    copyEntity() {
-        if (this.selectedEntity) {
-            const entity = this.entities.find(e => e.id === this.selectedEntity);
-            if (entity) {
-                this.clipboard = JSON.parse(JSON.stringify(entity));
-                this.showNotification('Entity copied');
-            }
-        }
-    }
-    
-    pasteEntity() {
-        if (this.clipboard) {
-            this.saveState();
-            const newEntity = JSON.parse(JSON.stringify(this.clipboard));
-            newEntity.id = `entity_${this.idCounter++}`;
-            
-            // Offset the pasted entity
-            const offset = 2; // Grid units
-            switch (newEntity.type) {
-                case 'line':
-                    newEntity.start[0] += offset;
-                    newEntity.start[1] += offset;
-                    newEntity.end[0] += offset;
-                    newEntity.end[1] += offset;
-                    break;
-                case 'rectangle':
-                    newEntity.topLeft[0] += offset;
-                    newEntity.topLeft[1] += offset;
-                    newEntity.bottomRight[0] += offset;
-                    newEntity.bottomRight[1] += offset;
-                    break;
-                case 'circle':
-                case 'arc':
-                    newEntity.center[0] += offset;
-                    newEntity.center[1] += offset;
-                    break;
-                case 'polyline':
-                    newEntity.points = newEntity.points.map(p => [p[0] + offset, p[1] + offset]);
-                    if (newEntity.segments) {
-                        newEntity.segments = newEntity.segments.map((seg, i) => ({
-                            ...seg,
-                            id: `${newEntity.id}_seg_${i}`
-                        }));
-                    }
-                    break;
-            }
-            
-            this.entities.push(newEntity);
-            this.selectedEntity = newEntity.id;
-            this.updateJSON();
-            this.render();
-            this.showNotification('Entity pasted');
-        }
-    }
-    
-    duplicateEntity() {
-        if (this.selectedEntity) {
-            this.copyEntity();
-            this.pasteEntity();
-        }
-    }
-    
-    showNotification(message) {
-        const notification = document.createElement('div');
-        notification.className = 'notification';
-        notification.textContent = message;
-        notification.style.cssText = `
-            position: fixed;
-            bottom: 20px;
-            right: 20px;
-            background: #0088ff;
-            color: white;
-            padding: 10px 20px;
-            border-radius: 5px;
-            z-index: 1000;
-            animation: fadeIn 0.3s, fadeOut 0.3s 1.7s;
-        `;
-        document.body.appendChild(notification);
-        setTimeout(() => notification.remove(), 2000);
-    }
-    
-    displayShortcuts() {
-        const shortcuts = [
-            'Ctrl+Z: Undo',
-            'Ctrl+Y: Redo',
-            'Ctrl+C: Copy',
-            'Ctrl+V: Paste',
-            'Ctrl+D: Duplicate',
-            'Delete: Delete',
-            'G: Toggle Grid',
-            'D: Toggle Dimensions',
-            'ESC: Cancel',
-            'C (in polyline): Close',
-            'Space: Pan (hold)',
-            'Scroll: Zoom'
-        ];
-        
-        // Add shortcuts info to status bar
-        const statusBar = document.querySelector('.status-bar');
-        if (statusBar && !document.getElementById('shortcuts-hint')) {
-            const shortcutsHint = document.createElement('span');
-            shortcutsHint.id = 'shortcuts-hint';
-            shortcutsHint.style.cssText = 'margin-left: auto; font-size: 11px; opacity: 0.7;';
-            shortcutsHint.textContent = 'Press H for shortcuts';
-            statusBar.appendChild(shortcutsHint);
-        }
-    }
-    
-    handleJSONHover(e) {
-        const rect = this.jsonEditor.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
-        
-        // Calculate line based on cursor position
-        const lineHeight = parseInt(window.getComputedStyle(this.jsonEditor).lineHeight) || 20;
-        const paddingTop = parseInt(window.getComputedStyle(this.jsonEditor).paddingTop) || 15;
-        const scrollTop = this.jsonEditor.scrollTop;
-        const charHeight = this.jsonEditor.scrollHeight / this.jsonEditor.value.split('\n').length;
-        const approximateLine = Math.floor((y - paddingTop + scrollTop) / charHeight);
-        
-        const text = this.jsonEditor.value;
-        const lines = text.split('\n');
-        
-        if (approximateLine < 0 || approximateLine >= lines.length) {
-            this.hoveredEntity = null;
-            this.hoveredSegmentId = null;
-            this.render();
-            return;
-        }
-        
-        // Search for entity or segment ID in surrounding lines
-        let entityId = null;
-        let segmentId = null;
-        const searchRadius = 10;
-        
-        for (let offset = 0; offset <= searchRadius; offset++) {
-            for (let dir of [-1, 1]) {
-                if (offset === 0 && dir === -1) continue;
-                const lineIdx = approximateLine + (offset * dir);
-                if (lineIdx >= 0 && lineIdx < lines.length) {
-                    const line = lines[lineIdx];
-                    
-                    // Check for segment ID first (more specific)
-                    const segmentMatch = line.match(/"id"\s*:\s*"(entity_\d+_seg_\d+)"/);
-                    if (segmentMatch) {
-                        segmentId = segmentMatch[1];
-                        entityId = segmentMatch[1].split('_seg_')[0];
-                        break;
-                    }
-                    
-                    // Check for entity ID
-                    const entityMatch = line.match(/"id"\s*:\s*"(entity_\d+)"/);
-                    if (entityMatch && !entityMatch[1].includes('_seg_')) {
-                        entityId = entityMatch[1];
-                        break;
-                    }
-                }
-            }
-            if (entityId) break;
-        }
-        
-        if (entityId !== this.hoveredEntity || segmentId !== this.hoveredSegmentId) {
-            this.hoveredEntity = entityId;
-            this.hoveredSegmentId = segmentId;
-            this.render();
-        }
-    }
-    
-    handleJSONClick(e) {
-        if (this.hoveredEntity) {
-            const entity = this.entities.find(e => e.id === this.hoveredEntity);
-            if (entity) {
-                this.selectEntity(entity);
-                
-                if (this.hoveredSegmentId) {
-                    const segmentMatch = this.hoveredSegmentId.match(/_seg_(\d+)$/);
-                    if (segmentMatch) {
-                        this.selectedSegment = parseInt(segmentMatch[1]);
-                        this.updateSegmentMetadataEditor(entity, this.selectedSegment);
-                    }
-                }
-            }
-        }
     }
     
     setTool(tool) {
@@ -409,13 +130,9 @@ class ParametricDrawingApp {
     }
     
     snapToGrid(x, y) {
-        // Apply zoom and pan inverse
-        const worldX = (x - this.panOffset.x) / this.zoom;
-        const worldY = (y - this.panOffset.y) / this.zoom;
-        
         return {
-            x: Math.round(worldX / this.gridSize) * this.gridSize,
-            y: Math.round(worldY / this.gridSize) * this.gridSize
+            x: Math.round(x / this.gridSize) * this.gridSize,
+            y: Math.round(y / this.gridSize) * this.gridSize
         };
     }
     
@@ -467,25 +184,15 @@ class ParametricDrawingApp {
                         const newPoint = this.normalizeCoordinates(oldPoint.x, oldPoint.y);
                         return [newPoint.x, newPoint.y];
                     });
-                    // Ensure correct segment count based on closed state
-                    const expectedSegmentCount = entity.closed ? entity.points.length : entity.points.length - 1;
-                    if (!entity.segments) {
+                    // Regenerate segment IDs if they don't exist
+                    if (!entity.segments || entity.segments.length === 0) {
+                        const segmentCount = entity.closed ? entity.points.length : entity.points.length - 1;
                         entity.segments = [];
-                    }
-                    
-                    // Adjust segment array if needed
-                    if (entity.segments.length !== expectedSegmentCount) {
-                        const oldSegments = [...entity.segments];
-                        entity.segments = [];
-                        for (let i = 0; i < expectedSegmentCount; i++) {
-                            if (oldSegments[i]) {
-                                entity.segments.push(oldSegments[i]);
-                            } else {
-                                entity.segments.push({
-                                    id: `${entity.id}_seg_${i}`,
-                                    metadata: {}
-                                });
-                            }
+                        for (let i = 0; i < segmentCount; i++) {
+                            entity.segments.push({
+                                id: `${entity.id}_seg_${i}`,
+                                metadata: {}
+                            });
                         }
                     }
                     break;
@@ -507,18 +214,10 @@ class ParametricDrawingApp {
         const y = e.clientY - rect.top;
         const gridPos = this.snapToGrid(x, y);
         
-        // Check for space bar panning
-        if (this.isPanning) {
-            this.panStart = { x: e.clientX, y: e.clientY };
-            this.panStartOffset = { ...this.panOffset };
-            return;
-        }
-        
         if (this.settingOrigin) {
             const oldOrigin = { ...this.origin };
             this.origin = { ...gridPos };
             this.settingOrigin = false;
-            this.saveState();
             this.recalculateCoordinates(oldOrigin);
             this.setTool('select');
             this.render();
@@ -526,13 +225,10 @@ class ParametricDrawingApp {
         }
         
         if (this.currentTool === 'select') {
-            const worldX = (x - this.panOffset.x) / this.zoom;
-            const worldY = (y - this.panOffset.y) / this.zoom;
-            const entity = this.getEntityAt(worldX, worldY);
-            
+            const entity = this.getEntityAt(x, y);
             if (entity) {
                 if (this.selectedEntity === entity.id && entity.type === 'polyline') {
-                    const segment = this.getSegmentAt(worldX, worldY, entity);
+                    const segment = this.getSegmentAt(x, y, entity);
                     if (segment !== null) {
                         this.selectedSegment = segment;
                         this.updateSegmentMetadataEditor(entity, segment);
@@ -573,14 +269,6 @@ class ParametricDrawingApp {
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
         
-        // Handle panning
-        if (this.isPanning && this.panStart) {
-            this.panOffset.x = this.panStartOffset.x + (e.clientX - this.panStart.x);
-            this.panOffset.y = this.panStartOffset.y + (e.clientY - this.panStart.y);
-            this.render();
-            return;
-        }
-        
         this.mousePos = { x, y };
         this.gridPos = this.snapToGrid(x, y);
         
@@ -601,17 +289,13 @@ class ParametricDrawingApp {
         } else if (this.isDrawing && this.tempShape) {
             this.tempShape.end = this.gridPos;
         } else if (this.currentTool === 'select' && !this.isDragging) {
-            const worldX = (x - this.panOffset.x) / this.zoom;
-            const worldY = (y - this.panOffset.y) / this.zoom;
-            const entity = this.getEntityAt(worldX, worldY);
+            const entity = this.getEntityAt(x, y);
             this.canvas.style.cursor = entity ? 'move' : 'default';
         }
         
-        const worldMouseX = (x - this.panOffset.x) / this.zoom;
-        const worldMouseY = (y - this.panOffset.y) / this.zoom;
         const dist = Math.sqrt(
-            Math.pow(this.gridPos.x - worldMouseX, 2) + 
-            Math.pow(this.gridPos.y - worldMouseY, 2)
+            Math.pow(this.gridPos.x - x, 2) + 
+            Math.pow(this.gridPos.y - y, 2)
         );
         this.snapIndicator = dist < this.snapThreshold ? this.gridPos : null;
         
@@ -619,11 +303,6 @@ class ParametricDrawingApp {
     }
     
     handleMouseUp(e) {
-        if (this.isPanning) {
-            this.panStart = null;
-            return;
-        }
-        
         if (this.isDragging) {
             this.isDragging = false;
             this.dragEntity = null;
@@ -632,7 +311,6 @@ class ParametricDrawingApp {
             this.isDrawing = false;
             
             if (this.currentTool !== 'polyline') {
-                this.saveState();
                 this.addEntity(this.tempShape);
             }
             
@@ -643,7 +321,6 @@ class ParametricDrawingApp {
     handleDoubleClick(e) {
         if (this.currentTool === 'polyline' && this.isDrawingPolyline) {
             if (this.polylinePoints.length > 1) {
-                this.saveState();
                 this.addEntity({
                     type: 'polyline',
                     points: [...this.polylinePoints],
@@ -656,27 +333,16 @@ class ParametricDrawingApp {
     }
     
     handleKeyDown(e) {
-        // Prevent default for our shortcuts
-        if ((e.ctrlKey || e.metaKey) && ['z', 'y', 'c', 'v', 'd'].includes(e.key.toLowerCase())) {
-            e.preventDefault();
-        }
-        
-        if (e.key === ' ') {
-            e.preventDefault();
-            this.isPanning = true;
-            this.canvas.style.cursor = 'grab';
-        } else if (e.key === 'Escape') {
+        if (e.key === 'Escape') {
             this.isDrawingPolyline = false;
             this.polylinePoints = [];
             this.isDrawing = false;
             this.tempShape = null;
             this.render();
         } else if (e.key === 'Delete' && this.selectedEntity) {
-            this.saveState();
             this.deleteEntity(this.selectedEntity);
         } else if (e.key === 'c' && this.currentTool === 'polyline' && this.isDrawingPolyline) {
             if (this.polylinePoints.length > 2) {
-                this.saveState();
                 this.addEntity({
                     type: 'polyline',
                     points: [...this.polylinePoints],
@@ -685,56 +351,7 @@ class ParametricDrawingApp {
                 this.isDrawingPolyline = false;
                 this.polylinePoints = [];
             }
-        } else if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
-            this.undo();
-        } else if ((e.ctrlKey || e.metaKey) && e.key === 'y') {
-            this.redo();
-        } else if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
-            this.copyEntity();
-        } else if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
-            this.pasteEntity();
-        } else if ((e.ctrlKey || e.metaKey) && e.key === 'd') {
-            this.duplicateEntity();
-        } else if (e.key === 'g' || e.key === 'G') {
-            this.showGrid = !this.showGrid;
-            this.render();
-        } else if (e.key === 'd' || e.key === 'D') {
-            if (!e.ctrlKey && !e.metaKey) {
-                this.showDimensions = !this.showDimensions;
-                this.render();
-            }
-        } else if (e.key === 'h' || e.key === 'H') {
-            this.showShortcutsDialog();
         }
-    }
-    
-    handleKeyUp(e) {
-        if (e.key === ' ') {
-            this.isPanning = false;
-            this.panStart = null;
-            this.canvas.style.cursor = this.currentTool === 'select' ? 'default' : 'crosshair';
-        }
-    }
-    
-    showShortcutsDialog() {
-        const shortcuts = `
-Keyboard Shortcuts:
-━━━━━━━━━━━━━━━━━━
-Ctrl+Z    Undo
-Ctrl+Y    Redo  
-Ctrl+C    Copy entity
-Ctrl+V    Paste entity
-Ctrl+D    Duplicate entity
-Delete    Delete selected
-G         Toggle grid
-D         Toggle dimensions
-Space     Pan view (hold)
-Scroll    Zoom in/out
-ESC       Cancel operation
-C         Close polyline (while drawing)
-H         Show this help
-        `;
-        alert(shortcuts);
     }
     
     getEntityAt(x, y) {
@@ -750,7 +367,7 @@ H         Show this help
     getSegmentAt(x, y, entity) {
         if (entity.type !== 'polyline') return null;
         
-        const threshold = 5 / this.zoom;
+        const threshold = 5;
         for (let i = 0; i < entity.points.length - 1; i++) {
             const p1 = this.denormalizeCoordinates(entity.points[i][0], entity.points[i][1]);
             const p2 = this.denormalizeCoordinates(entity.points[i + 1][0], entity.points[i + 1][1]);
@@ -866,8 +483,8 @@ H         Show this help
                 });
                 entity.closed = shape.closed;
                 
-                // Generate segment IDs based on closed state
-                const segmentCount = entity.closed ? entity.points.length : entity.points.length - 1;
+                // Generate segment IDs
+                const segmentCount = shape.closed ? entity.points.length : entity.points.length - 1;
                 entity.segments = [];
                 for (let i = 0; i < segmentCount; i++) {
                     entity.segments.push({
@@ -957,6 +574,32 @@ H         Show this help
         this.jsonEditor.setSelectionRange(pos, pos);
     }
     
+    handleJSONHover(e) {
+        const cursorPos = this.jsonEditor.selectionStart;
+        const text = this.jsonEditor.value;
+        const lines = text.substring(0, cursorPos).split('\n');
+        const lineNumber = lines.length - 1;
+        const allLines = text.split('\n');
+        
+        let entityId = null;
+        let searchStart = Math.max(0, lineNumber - 10);
+        let searchEnd = Math.min(allLines.length, lineNumber + 10);
+        
+        for (let i = searchStart; i < searchEnd; i++) {
+            const line = allLines[i];
+            const match = line.match(/"id"\s*:\s*"(entity_\d+)"/);
+            if (match) {
+                entityId = match[1];
+                break;
+            }
+        }
+        
+        if (entityId !== this.hoveredEntity) {
+            this.hoveredEntity = entityId;
+            this.render();
+        }
+    }
+    
     updateMetadataEditor(entity) {
         const container = document.getElementById('entity-metadata');
         const addButton = document.getElementById('add-metadata-field');
@@ -979,31 +622,6 @@ H         Show this help
                 </div>
             </div>
         `;
-        
-        // Add closed checkbox for polylines
-        if (entity.type === 'polyline') {
-            const closedField = document.createElement('div');
-            closedField.className = 'metadata-field';
-            closedField.innerHTML = `
-                <label>Closed</label>
-                <input type="checkbox" id="closed-checkbox" ${entity.closed ? 'checked' : ''} style="width: auto; margin: 0;">
-            `;
-            container.appendChild(closedField);
-        }
-        
-        // Add dimension info
-        if (this.showDimensions) {
-            const dimInfo = this.getEntityDimensions(entity);
-            if (dimInfo) {
-                const dimField = document.createElement('div');
-                dimField.className = 'metadata-field';
-                dimField.innerHTML = `
-                    <label>Dimensions</label>
-                    <input type="text" value="${dimInfo}" readonly style="opacity: 0.7; font-size: 11px">
-                `;
-                container.appendChild(dimField);
-            }
-        }
         
         Object.keys(entity.metadata || {}).forEach(key => {
             if (key !== 'color') {
@@ -1031,60 +649,12 @@ H         Show this help
             }
         });
         
-        // Add closed checkbox listener for polylines
-        if (entity.type === 'polyline') {
-            document.getElementById('closed-checkbox').addEventListener('change', (e) => {
-                this.updateEntityClosed(entity.id, e.target.checked);
-            });
-        }
-        
         container.querySelectorAll('input[data-field]').forEach(input => {
             input.addEventListener('change', (e) => {
                 const fieldName = e.target.dataset.field;
                 this.updateEntityMetadata(entity.id, fieldName, e.target.value);
             });
         });
-    }
-    
-    getEntityDimensions(entity) {
-        switch (entity.type) {
-            case 'line':
-                const length = Math.sqrt(
-                    Math.pow(entity.end[0] - entity.start[0], 2) +
-                    Math.pow(entity.end[1] - entity.start[1], 2)
-                );
-                return `Length: ${length.toFixed(1)} units`;
-                
-            case 'rectangle':
-                const width = Math.abs(entity.bottomRight[0] - entity.topLeft[0]);
-                const height = Math.abs(entity.bottomRight[1] - entity.topLeft[1]);
-                return `${width} × ${height} units`;
-                
-            case 'circle':
-                return `Radius: ${entity.radius.toFixed(1)} units`;
-                
-            case 'polyline':
-                let totalLength = 0;
-                for (let i = 0; i < entity.points.length - 1; i++) {
-                    const segLength = Math.sqrt(
-                        Math.pow(entity.points[i + 1][0] - entity.points[i][0], 2) +
-                        Math.pow(entity.points[i + 1][1] - entity.points[i][1], 2)
-                    );
-                    totalLength += segLength;
-                }
-                if (entity.closed && entity.points.length > 2) {
-                    const lastSegLength = Math.sqrt(
-                        Math.pow(entity.points[0][0] - entity.points[entity.points.length - 1][0], 2) +
-                        Math.pow(entity.points[0][1] - entity.points[entity.points.length - 1][1], 2)
-                    );
-                    totalLength += lastSegLength;
-                }
-                const closedStatus = entity.closed ? 'closed' : 'open';
-                return `Total: ${totalLength.toFixed(1)} units, ${entity.points.length} points (${closedStatus})`;
-                
-            default:
-                return null;
-        }
     }
     
     updateSegmentMetadataEditor(entity, segmentIndex) {
@@ -1102,12 +672,6 @@ H         Show this help
         
         const segment = entity.segments[segmentIndex];
         
-        const p1 = entity.points[segmentIndex];
-        const p2 = entity.points[(segmentIndex + 1) % entity.points.length];
-        const segmentLength = Math.sqrt(
-            Math.pow(p2[0] - p1[0], 2) + Math.pow(p2[1] - p1[1], 2)
-        );
-        
         container.innerHTML = `
             <div class="metadata-field">
                 <label>Entity ID</label>
@@ -1123,11 +687,7 @@ H         Show this help
             </div>
             <div class="metadata-field">
                 <label>Points</label>
-                <input type="text" value="[${p1}] → [${p2}]" readonly style="opacity: 0.7; font-size: 11px">
-            </div>
-            <div class="metadata-field">
-                <label>Length</label>
-                <input type="text" value="${segmentLength.toFixed(2)} units" readonly style="opacity: 0.7">
+                <input type="text" value="[${entity.points[segmentIndex]}] → [${entity.points[(segmentIndex + 1) % entity.points.length]}]" readonly style="opacity: 0.7; font-size: 11px">
             </div>
             <div class="metadata-field">
                 <label>Segment Color</label>
@@ -1228,35 +788,6 @@ H         Show this help
         }
     }
     
-    updateEntityClosed(entityId, closed) {
-        const entity = this.entities.find(e => e.id === entityId);
-        if (entity && entity.type === 'polyline') {
-            const wasClosed = entity.closed;
-            entity.closed = closed;
-            
-            // Update segments array for closed/open state
-            if (closed && !wasClosed) {
-                // Adding closing segment
-                if (!entity.segments) entity.segments = [];
-                const newSegmentIndex = entity.points.length - 1;
-                if (!entity.segments[newSegmentIndex]) {
-                    entity.segments[newSegmentIndex] = {
-                        id: `${entity.id}_seg_${newSegmentIndex}`,
-                        metadata: {}
-                    };
-                }
-            } else if (!closed && wasClosed) {
-                // Removing closing segment
-                if (entity.segments && entity.segments.length === entity.points.length) {
-                    entity.segments.pop();
-                }
-            }
-            
-            this.updateJSON();
-            this.render();
-        }
-    }
-    
     addMetadataField() {
         if (!this.selectedEntity) return;
         
@@ -1289,7 +820,7 @@ H         Show this help
     }
     
     isPointNearEntity(x, y, entity) {
-        const threshold = 5 / this.zoom;
+        const threshold = 5;
         
         switch (entity.type) {
             case 'line':
@@ -1388,13 +919,7 @@ H         Show this help
     render() {
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
         
-        this.ctx.save();
-        this.ctx.translate(this.panOffset.x, this.panOffset.y);
-        this.ctx.scale(this.zoom, this.zoom);
-        
-        if (this.showGrid) {
-            this.drawGrid();
-        }
+        this.drawGrid();
         this.drawOrigin();
         this.drawEntities();
         
@@ -1413,65 +938,11 @@ H         Show this help
         if (this.settingOrigin) {
             this.drawOriginCursor();
         }
-        
-        if (this.showDimensions) {
-            this.drawDimensions();
-        }
-        
-        this.ctx.restore();
-        
-        // Draw zoom indicator
-        this.drawZoomIndicator();
-    }
-    
-    drawZoomIndicator() {
-        if (this.zoom !== 1) {
-            this.ctx.fillStyle = '#aaa';
-            this.ctx.font = '12px sans-serif';
-            this.ctx.fillText(`Zoom: ${(this.zoom * 100).toFixed(0)}%`, 10, this.canvas.height - 10);
-        }
-    }
-    
-    drawDimensions() {
-        this.ctx.font = '10px sans-serif';
-        this.ctx.fillStyle = '#888';
-        
-        this.entities.forEach(entity => {
-            const isSelected = entity.id === this.selectedEntity;
-            if (!isSelected) return;
-            
-            switch (entity.type) {
-                case 'line':
-                    const start = this.denormalizeCoordinates(entity.start[0], entity.start[1]);
-                    const end = this.denormalizeCoordinates(entity.end[0], entity.end[1]);
-                    const midX = (start.x + end.x) / 2;
-                    const midY = (start.y + end.y) / 2;
-                    const length = Math.sqrt(
-                        Math.pow(entity.end[0] - entity.start[0], 2) +
-                        Math.pow(entity.end[1] - entity.start[1], 2)
-                    );
-                    this.ctx.fillText(length.toFixed(1), midX + 5, midY - 5);
-                    break;
-                    
-                case 'rectangle':
-                    const tl = this.denormalizeCoordinates(entity.topLeft[0], entity.topLeft[1]);
-                    const br = this.denormalizeCoordinates(entity.bottomRight[0], entity.bottomRight[1]);
-                    const width = Math.abs(entity.bottomRight[0] - entity.topLeft[0]);
-                    const height = Math.abs(entity.bottomRight[1] - entity.topLeft[1]);
-                    this.ctx.fillText(`${width} × ${height}`, tl.x + 5, tl.y - 5);
-                    break;
-                    
-                case 'circle':
-                    const center = this.denormalizeCoordinates(entity.center[0], entity.center[1]);
-                    this.ctx.fillText(`r=${entity.radius.toFixed(1)}`, center.x + 5, center.y - entity.radius * this.gridSize - 5);
-                    break;
-            }
-        });
     }
     
     drawOrigin() {
         this.ctx.strokeStyle = '#ff0000';
-        this.ctx.lineWidth = 2 / this.zoom;
+        this.ctx.lineWidth = 2;
         
         this.ctx.beginPath();
         this.ctx.moveTo(this.origin.x - 10, this.origin.y);
@@ -1487,20 +958,20 @@ H         Show this help
     drawSnapIndicator() {
         this.ctx.fillStyle = '#ffff00';
         this.ctx.strokeStyle = '#ffff00';
-        this.ctx.lineWidth = 2 / this.zoom;
+        this.ctx.lineWidth = 2;
         
         this.ctx.beginPath();
-        this.ctx.arc(this.snapIndicator.x, this.snapIndicator.y, 5 / this.zoom, 0, Math.PI * 2);
+        this.ctx.arc(this.snapIndicator.x, this.snapIndicator.y, 5, 0, Math.PI * 2);
         this.ctx.stroke();
         
         this.ctx.beginPath();
-        this.ctx.arc(this.snapIndicator.x, this.snapIndicator.y, 2 / this.zoom, 0, Math.PI * 2);
+        this.ctx.arc(this.snapIndicator.x, this.snapIndicator.y, 2, 0, Math.PI * 2);
         this.ctx.fill();
     }
     
     drawOriginCursor() {
         this.ctx.strokeStyle = '#ff00ff';
-        this.ctx.lineWidth = 2 / this.zoom;
+        this.ctx.lineWidth = 2;
         this.ctx.setLineDash([5, 5]);
         
         this.ctx.beginPath();
@@ -1516,47 +987,42 @@ H         Show this help
         this.ctx.setLineDash([]);
         
         this.ctx.fillStyle = '#ff00ff';
-        this.ctx.font = `${12 / this.zoom}px sans-serif`;
+        this.ctx.font = '12px sans-serif';
         this.ctx.fillText('Click to set origin', this.gridPos.x + 20, this.gridPos.y - 5);
     }
     
     drawGrid() {
-        const startX = Math.floor(-this.panOffset.x / this.zoom / this.gridSize) * this.gridSize - this.gridSize;
-        const endX = Math.ceil((this.canvas.width - this.panOffset.x) / this.zoom / this.gridSize) * this.gridSize + this.gridSize;
-        const startY = Math.floor(-this.panOffset.y / this.zoom / this.gridSize) * this.gridSize - this.gridSize;
-        const endY = Math.ceil((this.canvas.height - this.panOffset.y) / this.zoom / this.gridSize) * this.gridSize + this.gridSize;
-        
         this.ctx.strokeStyle = '#3a3a3a';
-        this.ctx.lineWidth = 0.5 / this.zoom;
+        this.ctx.lineWidth = 0.5;
         
-        for (let x = startX; x <= endX; x += this.gridSize) {
+        for (let x = 0; x <= this.canvas.width; x += this.gridSize) {
             this.ctx.beginPath();
-            this.ctx.moveTo(x, startY);
-            this.ctx.lineTo(x, endY);
+            this.ctx.moveTo(x, 0);
+            this.ctx.lineTo(x, this.canvas.height);
             this.ctx.stroke();
         }
         
-        for (let y = startY; y <= endY; y += this.gridSize) {
+        for (let y = 0; y <= this.canvas.height; y += this.gridSize) {
             this.ctx.beginPath();
-            this.ctx.moveTo(startX, y);
-            this.ctx.lineTo(endX, y);
+            this.ctx.moveTo(0, y);
+            this.ctx.lineTo(this.canvas.width, y);
             this.ctx.stroke();
         }
         
         this.ctx.strokeStyle = '#4a4a4a';
-        this.ctx.lineWidth = 1 / this.zoom;
+        this.ctx.lineWidth = 1;
         
-        for (let x = startX; x <= endX; x += this.gridSize * 5) {
+        for (let x = 0; x <= this.canvas.width; x += this.gridSize * 5) {
             this.ctx.beginPath();
-            this.ctx.moveTo(x, startY);
-            this.ctx.lineTo(x, endY);
+            this.ctx.moveTo(x, 0);
+            this.ctx.lineTo(x, this.canvas.height);
             this.ctx.stroke();
         }
         
-        for (let y = startY; y <= endY; y += this.gridSize * 5) {
+        for (let y = 0; y <= this.canvas.height; y += this.gridSize * 5) {
             this.ctx.beginPath();
-            this.ctx.moveTo(startX, y);
-            this.ctx.lineTo(endX, y);
+            this.ctx.moveTo(0, y);
+            this.ctx.lineTo(this.canvas.width, y);
             this.ctx.stroke();
         }
     }
@@ -1566,12 +1032,12 @@ H         Show this help
             const isSelected = entity.id === this.selectedEntity;
             const isHovered = entity.id === this.hoveredEntity;
             
-            if (entity.type === 'polyline' && entity.segments && (isSelected || this.hoveredSegmentId?.startsWith(entity.id))) {
+            if (entity.type === 'polyline' && entity.segments && isSelected) {
                 this.drawPolylineWithSegments(entity, isHovered);
             } else {
                 const color = entity.metadata?.color || '#00ff88';
                 this.ctx.strokeStyle = isSelected ? '#0088ff' : (isHovered ? '#ffaa00' : color);
-                this.ctx.lineWidth = (isSelected || isHovered) ? 2 / this.zoom : 1 / this.zoom;
+                this.ctx.lineWidth = (isSelected || isHovered) ? 2 : 1;
                 this.drawEntity(entity);
             }
         });
@@ -1588,12 +1054,9 @@ H         Show this help
             }
             
             const isSegmentSelected = this.selectedSegment === i;
-            const isSegmentHovered = this.hoveredSegmentId === `${entity.id}_seg_${i}`;
-            
             this.ctx.strokeStyle = isSegmentSelected ? '#ff00ff' : 
-                                  (isSegmentHovered ? '#ff8800' :
-                                  (isHovered ? '#ffaa00' : segmentColor));
-            this.ctx.lineWidth = (isSegmentSelected || isSegmentHovered) ? 3 / this.zoom : 2 / this.zoom;
+                                  (isHovered ? '#ffaa00' : segmentColor);
+            this.ctx.lineWidth = isSegmentSelected ? 3 : 2;
             
             this.ctx.beginPath();
             this.ctx.moveTo(p1.x, p1.y);
@@ -1615,12 +1078,9 @@ H         Show this help
             }
             
             const isSegmentSelected = this.selectedSegment === lastIndex;
-            const isSegmentHovered = this.hoveredSegmentId === `${entity.id}_seg_${lastIndex}`;
-            
             this.ctx.strokeStyle = isSegmentSelected ? '#ff00ff' : 
-                                  (isSegmentHovered ? '#ff8800' :
-                                  (isHovered ? '#ffaa00' : segmentColor));
-            this.ctx.lineWidth = (isSegmentSelected || isSegmentHovered) ? 3 / this.zoom : 2 / this.zoom;
+                                  (isHovered ? '#ffaa00' : segmentColor);
+            this.ctx.lineWidth = isSegmentSelected ? 3 : 2;
             
             this.ctx.beginPath();
             this.ctx.moveTo(last.x, last.y);
@@ -1691,8 +1151,8 @@ H         Show this help
     
     drawTempShape() {
         this.ctx.strokeStyle = '#ffaa00';
-        this.ctx.lineWidth = 1 / this.zoom;
-        this.ctx.setLineDash([5 / this.zoom, 5 / this.zoom]);
+        this.ctx.lineWidth = 1;
+        this.ctx.setLineDash([5, 5]);
         
         switch (this.tempShape.type) {
             case 'line':
@@ -1739,8 +1199,8 @@ H         Show this help
     
     drawTempPolyline() {
         this.ctx.strokeStyle = '#ffaa00';
-        this.ctx.lineWidth = 1 / this.zoom;
-        this.ctx.setLineDash([5 / this.zoom, 5 / this.zoom]);
+        this.ctx.lineWidth = 1;
+        this.ctx.setLineDash([5, 5]);
         
         this.ctx.beginPath();
         this.ctx.moveTo(this.polylinePoints[0].x, this.polylinePoints[0].y);
@@ -1810,32 +1270,16 @@ H         Show this help
                         maxId = Math.max(maxId, parseInt(match[1]));
                     }
                     
-                    // Ensure polylines have segment IDs and correct count
+                    // Ensure polylines have segment IDs
                     if (entity.type === 'polyline') {
-                        const expectedSegmentCount = entity.closed ? entity.points.length : entity.points.length - 1;
-                        
-                        if (!entity.segments) {
+                        if (!entity.segments || entity.segments.length === 0) {
+                            const segmentCount = entity.closed ? entity.points.length : entity.points.length - 1;
                             entity.segments = [];
-                        }
-                        
-                        // Adjust segment array to match expected count
-                        if (entity.segments.length !== expectedSegmentCount) {
-                            // Preserve existing segments where possible
-                            const oldSegments = [...entity.segments];
-                            entity.segments = [];
-                            
-                            for (let i = 0; i < expectedSegmentCount; i++) {
-                                if (oldSegments[i]) {
-                                    entity.segments.push(oldSegments[i]);
-                                    if (!oldSegments[i].id) {
-                                        oldSegments[i].id = `${entity.id}_seg_${i}`;
-                                    }
-                                } else {
-                                    entity.segments.push({
-                                        id: `${entity.id}_seg_${i}`,
-                                        metadata: {}
-                                    });
-                                }
+                            for (let i = 0; i < segmentCount; i++) {
+                                entity.segments.push({
+                                    id: `${entity.id}_seg_${i}`,
+                                    metadata: {}
+                                });
                             }
                         } else {
                             // Ensure all segments have IDs
@@ -1975,26 +1419,4 @@ H         Show this help
     }
 }
 
-// Add keyup listener for space bar
-document.addEventListener('keyup', (e) => {
-    if (e.key === ' ' && window.app) {
-        window.app.handleKeyUp(e);
-    }
-});
-
-// Add CSS animations
-const style = document.createElement('style');
-style.textContent = `
-@keyframes fadeIn {
-    from { opacity: 0; transform: translateY(10px); }
-    to { opacity: 1; transform: translateY(0); }
-}
-@keyframes fadeOut {
-    from { opacity: 1; }
-    to { opacity: 0; }
-}
-`;
-document.head.appendChild(style);
-
 const app = new ParametricDrawingApp();
-window.app = app;
