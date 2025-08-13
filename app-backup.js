@@ -117,7 +117,6 @@ class ParametricDrawingApp {
         this.currentTool = tool;
         this.isDrawingPolyline = false;
         this.polylinePoints = [];
-        this.selectedSegment = null;
         
         document.querySelectorAll('.tool-btn[data-tool]').forEach(btn => {
             btn.classList.toggle('active', btn.dataset.tool === tool);
@@ -150,64 +149,6 @@ class ParametricDrawingApp {
         };
     }
     
-    recalculateCoordinates(oldOrigin) {
-        this.entities.forEach(entity => {
-            switch (entity.type) {
-                case 'line':
-                    const oldStart = this.denormalizeWithOrigin(entity.start[0], entity.start[1], oldOrigin);
-                    const oldEnd = this.denormalizeWithOrigin(entity.end[0], entity.end[1], oldOrigin);
-                    const newStart = this.normalizeCoordinates(oldStart.x, oldStart.y);
-                    const newEnd = this.normalizeCoordinates(oldEnd.x, oldEnd.y);
-                    entity.start = [newStart.x, newStart.y];
-                    entity.end = [newEnd.x, newEnd.y];
-                    break;
-                    
-                case 'rectangle':
-                    const oldTL = this.denormalizeWithOrigin(entity.topLeft[0], entity.topLeft[1], oldOrigin);
-                    const oldBR = this.denormalizeWithOrigin(entity.bottomRight[0], entity.bottomRight[1], oldOrigin);
-                    const newTL = this.normalizeCoordinates(oldTL.x, oldTL.y);
-                    const newBR = this.normalizeCoordinates(oldBR.x, oldBR.y);
-                    entity.topLeft = [newTL.x, newTL.y];
-                    entity.bottomRight = [newBR.x, newBR.y];
-                    break;
-                    
-                case 'circle':
-                    const oldCenter = this.denormalizeWithOrigin(entity.center[0], entity.center[1], oldOrigin);
-                    const newCenter = this.normalizeCoordinates(oldCenter.x, oldCenter.y);
-                    entity.center = [newCenter.x, newCenter.y];
-                    entity.radius = entity.radius * this.gridSize;
-                    break;
-                    
-                case 'polyline':
-                    entity.points = entity.points.map(p => {
-                        const oldPoint = this.denormalizeWithOrigin(p[0], p[1], oldOrigin);
-                        const newPoint = this.normalizeCoordinates(oldPoint.x, oldPoint.y);
-                        return [newPoint.x, newPoint.y];
-                    });
-                    // Regenerate segment IDs if they don't exist
-                    if (!entity.segments || entity.segments.length === 0) {
-                        const segmentCount = entity.closed ? entity.points.length : entity.points.length - 1;
-                        entity.segments = [];
-                        for (let i = 0; i < segmentCount; i++) {
-                            entity.segments.push({
-                                id: `${entity.id}_seg_${i}`,
-                                metadata: {}
-                            });
-                        }
-                    }
-                    break;
-            }
-        });
-        this.updateJSON();
-    }
-    
-    denormalizeWithOrigin(x, y, origin) {
-        return {
-            x: x * this.gridSize + origin.x,
-            y: y * this.gridSize + origin.y
-        };
-    }
-    
     handleMouseDown(e) {
         const rect = this.canvas.getBoundingClientRect();
         const x = e.clientX - rect.left;
@@ -215,37 +156,15 @@ class ParametricDrawingApp {
         const gridPos = this.snapToGrid(x, y);
         
         if (this.settingOrigin) {
-            const oldOrigin = { ...this.origin };
             this.origin = { ...gridPos };
             this.settingOrigin = false;
-            this.recalculateCoordinates(oldOrigin);
             this.setTool('select');
             this.render();
             return;
         }
         
         if (this.currentTool === 'select') {
-            const entity = this.getEntityAt(x, y);
-            if (entity) {
-                if (this.selectedEntity === entity.id && entity.type === 'polyline') {
-                    const segment = this.getSegmentAt(x, y, entity);
-                    if (segment !== null) {
-                        this.selectedSegment = segment;
-                        this.updateSegmentMetadataEditor(entity, segment);
-                    }
-                } else {
-                    this.selectEntity(entity);
-                    this.selectedSegment = null;
-                }
-                
-                this.isDragging = true;
-                this.dragStart = { ...gridPos };
-                this.dragEntity = entity;
-                this.canvas.style.cursor = 'move';
-            } else {
-                this.selectEntity(null);
-                this.selectedSegment = null;
-            }
+            this.selectEntity(x, y);
         } else if (this.currentTool === 'polyline') {
             if (!this.isDrawingPolyline) {
                 this.isDrawingPolyline = true;
@@ -272,25 +191,13 @@ class ParametricDrawingApp {
         this.mousePos = { x, y };
         this.gridPos = this.snapToGrid(x, y);
         
-        const worldX = Math.round((this.gridPos.x - this.origin.x) / this.gridSize);
-        const worldY = Math.round((this.gridPos.y - this.origin.y) / this.gridSize);
-        document.getElementById('coords').textContent = `${worldX}, ${worldY}`;
+        const worldX = this.gridPos.x - this.origin.x;
+        const worldY = this.gridPos.y - this.origin.y;
+        document.getElementById('coords').textContent = 
+            `${Math.round(worldX)}, ${Math.round(worldY)}`;
         
-        if (this.isDragging && this.dragEntity) {
-            const dx = (this.gridPos.x - this.dragStart.x) / this.gridSize;
-            const dy = (this.gridPos.y - this.dragStart.y) / this.gridSize;
-            
-            if (dx !== 0 || dy !== 0) {
-                this.moveEntity(this.dragEntity, dx, dy);
-                this.dragStart = { ...this.gridPos };
-                this.updateJSON();
-                this.render();
-            }
-        } else if (this.isDrawing && this.tempShape) {
+        if (this.isDrawing && this.tempShape) {
             this.tempShape.end = this.gridPos;
-        } else if (this.currentTool === 'select' && !this.isDragging) {
-            const entity = this.getEntityAt(x, y);
-            this.canvas.style.cursor = entity ? 'move' : 'default';
         }
         
         const dist = Math.sqrt(
@@ -303,11 +210,7 @@ class ParametricDrawingApp {
     }
     
     handleMouseUp(e) {
-        if (this.isDragging) {
-            this.isDragging = false;
-            this.dragEntity = null;
-            this.canvas.style.cursor = this.currentTool === 'select' ? 'default' : 'crosshair';
-        } else if (this.isDrawing && this.tempShape) {
+        if (this.isDrawing && this.tempShape) {
             this.isDrawing = false;
             
             if (this.currentTool !== 'polyline') {
@@ -354,73 +257,6 @@ class ParametricDrawingApp {
         }
     }
     
-    getEntityAt(x, y) {
-        for (let i = this.entities.length - 1; i >= 0; i--) {
-            const entity = this.entities[i];
-            if (this.isPointNearEntity(x, y, entity)) {
-                return entity;
-            }
-        }
-        return null;
-    }
-    
-    getSegmentAt(x, y, entity) {
-        if (entity.type !== 'polyline') return null;
-        
-        const threshold = 5;
-        for (let i = 0; i < entity.points.length - 1; i++) {
-            const p1 = this.denormalizeCoordinates(entity.points[i][0], entity.points[i][1]);
-            const p2 = this.denormalizeCoordinates(entity.points[i + 1][0], entity.points[i + 1][1]);
-            if (this.distanceToLine(x, y, p1, p2) < threshold) {
-                return i;
-            }
-        }
-        
-        if (entity.closed && entity.points.length > 2) {
-            const first = this.denormalizeCoordinates(entity.points[0][0], entity.points[0][1]);
-            const last = this.denormalizeCoordinates(
-                entity.points[entity.points.length - 1][0],
-                entity.points[entity.points.length - 1][1]
-            );
-            if (this.distanceToLine(x, y, last, first) < threshold) {
-                return entity.points.length - 1;
-            }
-        }
-        
-        return null;
-    }
-    
-    moveEntity(entity, dx, dy) {
-        switch (entity.type) {
-            case 'line':
-                entity.start[0] += dx;
-                entity.start[1] += dy;
-                entity.end[0] += dx;
-                entity.end[1] += dy;
-                break;
-                
-            case 'rectangle':
-                entity.topLeft[0] += dx;
-                entity.topLeft[1] += dy;
-                entity.bottomRight[0] += dx;
-                entity.bottomRight[1] += dy;
-                break;
-                
-            case 'circle':
-            case 'arc':
-                entity.center[0] += dx;
-                entity.center[1] += dy;
-                break;
-                
-            case 'polyline':
-                entity.points.forEach(point => {
-                    point[0] += dx;
-                    point[1] += dy;
-                });
-                break;
-        }
-    }
-    
     addEntity(shape) {
         const entity = {
             id: `entity_${this.idCounter++}`,
@@ -459,7 +295,7 @@ class ParametricDrawingApp {
                     Math.pow(shape.end.y - shape.start.y, 2)
                 );
                 entity.center = [center.x, center.y];
-                entity.radius = radius / this.gridSize;
+                entity.radius = radius / Math.min(this.canvas.width, this.canvas.height);
                 break;
                 
             case 'arc':
@@ -471,7 +307,7 @@ class ParametricDrawingApp {
                 const startAngle = 0;
                 const endAngle = Math.PI / 2;
                 entity.center = [arcCenter.x, arcCenter.y];
-                entity.radius = arcRadius / this.gridSize;
+                entity.radius = arcRadius / Math.min(this.canvas.width, this.canvas.height);
                 entity.startAngle = startAngle;
                 entity.endAngle = endAngle;
                 break;
@@ -482,16 +318,6 @@ class ParametricDrawingApp {
                     return [norm.x, norm.y];
                 });
                 entity.closed = shape.closed;
-                
-                // Generate segment IDs
-                const segmentCount = shape.closed ? entity.points.length : entity.points.length - 1;
-                entity.segments = [];
-                for (let i = 0; i < segmentCount; i++) {
-                    entity.segments.push({
-                        id: `${entity.id}_seg_${i}`,
-                        metadata: {}
-                    });
-                }
                 break;
         }
         
@@ -500,69 +326,74 @@ class ParametricDrawingApp {
         this.render();
     }
     
-    selectEntity(entity) {
-        if (entity) {
-            this.selectedEntity = entity.id;
-            this.highlightEntityInJSON(entity.id);
-            this.updateMetadataEditor(entity);
-        } else {
-            this.selectedEntity = null;
+    selectEntity(x, y) {
+        this.selectedEntity = null;
+        
+        for (let i = this.entities.length - 1; i >= 0; i--) {
+            const entity = this.entities[i];
+            if (this.isPointNearEntity(x, y, entity)) {
+                this.selectedEntity = entity.id;
+                this.highlightEntityInJSON(entity.id);
+                this.updateMetadataEditor(entity);
+                break;
+            }
+        }
+        
+        if (!this.selectedEntity) {
             this.clearJSONHighlight();
             this.clearMetadataEditor();
         }
+        
         this.render();
     }
     
     highlightEntityInJSON(entityId) {
         try {
-            const text = this.jsonEditor.value;
-            const lines = text.split('\n');
-            let entityStartLine = -1;
-            let entityEndLine = -1;
-            let braceCount = 0;
-            let foundId = false;
+            const data = JSON.parse(this.jsonEditor.value);
+            const entityIndex = data.entities.findIndex(e => e.id === entityId);
             
-            for (let i = 0; i < lines.length; i++) {
-                if (!foundId && lines[i].includes(`"id": "${entityId}"`)) {
-                    foundId = true;
-                    let j = i;
-                    while (j > 0 && !lines[j].trim().startsWith('{')) {
-                        j--;
+            if (entityIndex !== -1) {
+                const lines = this.jsonEditor.value.split('\n');
+                let currentLine = 0;
+                let entityStartLine = -1;
+                let entityEndLine = -1;
+                let inEntity = false;
+                let braceCount = 0;
+                
+                for (let i = 0; i < lines.length; i++) {
+                    if (lines[i].includes(`"id": "${entityId}"`) || 
+                        lines[i].includes(`"id":"${entityId}"`)) {
+                        entityStartLine = i;
+                        while (entityStartLine > 0 && !lines[entityStartLine].includes('{')) {
+                            entityStartLine--;
+                        }
+                        inEntity = true;
+                        braceCount = 1;
                     }
-                    entityStartLine = j;
-                    braceCount = 1;
-                    i = j + 1;
-                } else if (foundId) {
-                    for (let char of lines[i]) {
-                        if (char === '{') braceCount++;
-                        if (char === '}') {
-                            braceCount--;
-                            if (braceCount === 0) {
-                                entityEndLine = i;
-                                break;
-                            }
+                    
+                    if (inEntity) {
+                        for (let char of lines[i]) {
+                            if (char === '{') braceCount++;
+                            if (char === '}') braceCount--;
+                        }
+                        
+                        if (braceCount === 0) {
+                            entityEndLine = i;
+                            break;
                         }
                     }
-                    if (entityEndLine !== -1) break;
-                }
-            }
-            
-            if (entityStartLine !== -1 && entityEndLine !== -1) {
-                let startPos = 0;
-                for (let i = 0; i < entityStartLine; i++) {
-                    startPos += lines[i].length + 1;
                 }
                 
-                let endPos = 0;
-                for (let i = 0; i <= entityEndLine; i++) {
-                    endPos += lines[i].length + 1;
+                if (entityStartLine !== -1 && entityEndLine !== -1) {
+                    const start = lines.slice(0, entityStartLine).join('\n').length + entityStartLine;
+                    const end = lines.slice(0, entityEndLine + 1).join('\n').length + entityEndLine;
+                    
+                    this.jsonEditor.focus();
+                    this.jsonEditor.setSelectionRange(start, end);
+                    
+                    const scrollRatio = entityStartLine / lines.length;
+                    this.jsonEditor.scrollTop = scrollRatio * this.jsonEditor.scrollHeight;
                 }
-                
-                this.jsonEditor.focus();
-                this.jsonEditor.setSelectionRange(startPos, endPos - 1);
-                
-                const lineHeight = this.jsonEditor.scrollHeight / lines.length;
-                this.jsonEditor.scrollTop = entityStartLine * lineHeight - 50;
             }
         } catch (e) {
             console.error('Error highlighting JSON:', e);
@@ -657,110 +488,6 @@ class ParametricDrawingApp {
         });
     }
     
-    updateSegmentMetadataEditor(entity, segmentIndex) {
-        const container = document.getElementById('entity-metadata');
-        
-        if (!entity.segments) {
-            entity.segments = [];
-        }
-        if (!entity.segments[segmentIndex]) {
-            entity.segments[segmentIndex] = { 
-                id: `${entity.id}_seg_${segmentIndex}`,
-                metadata: {} 
-            };
-        }
-        
-        const segment = entity.segments[segmentIndex];
-        
-        container.innerHTML = `
-            <div class="metadata-field">
-                <label>Entity ID</label>
-                <input type="text" value="${entity.id}" readonly style="opacity: 0.7">
-            </div>
-            <div class="metadata-field">
-                <label>Segment ID</label>
-                <input type="text" value="${segment.id}" readonly style="opacity: 0.7">
-            </div>
-            <div class="metadata-field">
-                <label>Segment Index</label>
-                <input type="text" value="${segmentIndex}" readonly style="opacity: 0.7">
-            </div>
-            <div class="metadata-field">
-                <label>Points</label>
-                <input type="text" value="[${entity.points[segmentIndex]}] → [${entity.points[(segmentIndex + 1) % entity.points.length]}]" readonly style="opacity: 0.7; font-size: 11px">
-            </div>
-            <div class="metadata-field">
-                <label>Segment Color</label>
-                <div class="color-input-wrapper">
-                    <input type="color" id="segment-color-picker" value="${segment.metadata?.color || entity.metadata?.color || '#00ff88'}">
-                    <input type="text" id="segment-color-text" value="${segment.metadata?.color || entity.metadata?.color || '#00ff88'}">
-                </div>
-            </div>
-        `;
-        
-        Object.keys(segment.metadata || {}).forEach(key => {
-            if (key !== 'color') {
-                const field = document.createElement('div');
-                field.className = 'metadata-field';
-                field.innerHTML = `
-                    <label>${key}</label>
-                    <input type="text" data-segment-field="${key}" value="${segment.metadata[key]}">
-                `;
-                container.appendChild(field);
-            }
-        });
-        
-        document.getElementById('segment-color-picker').addEventListener('input', (e) => {
-            this.updateSegmentColor(entity.id, segmentIndex, e.target.value);
-            document.getElementById('segment-color-text').value = e.target.value;
-        });
-        
-        document.getElementById('segment-color-text').addEventListener('change', (e) => {
-            this.updateSegmentColor(entity.id, segmentIndex, e.target.value);
-            if (e.target.value.startsWith('#')) {
-                document.getElementById('segment-color-picker').value = e.target.value;
-            }
-        });
-        
-        container.querySelectorAll('input[data-segment-field]').forEach(input => {
-            input.addEventListener('change', (e) => {
-                const fieldName = e.target.dataset.segmentField;
-                this.updateSegmentMetadata(entity.id, segmentIndex, fieldName, e.target.value);
-            });
-        });
-    }
-    
-    updateSegmentColor(entityId, segmentIndex, color) {
-        const entity = this.entities.find(e => e.id === entityId);
-        if (entity) {
-            if (!entity.segments) entity.segments = [];
-            if (!entity.segments[segmentIndex]) {
-                entity.segments[segmentIndex] = { 
-                    id: `${entity.id}_seg_${segmentIndex}`,
-                    metadata: {} 
-                };
-            }
-            entity.segments[segmentIndex].metadata.color = color;
-            this.updateJSON();
-            this.render();
-        }
-    }
-    
-    updateSegmentMetadata(entityId, segmentIndex, field, value) {
-        const entity = this.entities.find(e => e.id === entityId);
-        if (entity) {
-            if (!entity.segments) entity.segments = [];
-            if (!entity.segments[segmentIndex]) {
-                entity.segments[segmentIndex] = { 
-                    id: `${entity.id}_seg_${segmentIndex}`,
-                    metadata: {} 
-                };
-            }
-            entity.segments[segmentIndex].metadata[field] = value;
-            this.updateJSON();
-        }
-    }
-    
     clearMetadataEditor() {
         const container = document.getElementById('entity-metadata');
         const addButton = document.getElementById('add-metadata-field');
@@ -793,28 +520,12 @@ class ParametricDrawingApp {
         
         const fieldName = prompt('Enter field name:');
         if (fieldName && fieldName.trim()) {
-            if (this.selectedSegment !== null) {
-                const entity = this.entities.find(e => e.id === this.selectedEntity);
-                if (entity && entity.type === 'polyline') {
-                    if (!entity.segments) entity.segments = [];
-                    if (!entity.segments[this.selectedSegment]) {
-                        entity.segments[this.selectedSegment] = { 
-                            id: `${entity.id}_seg_${this.selectedSegment}`,
-                            metadata: {} 
-                        };
-                    }
-                    entity.segments[this.selectedSegment].metadata[fieldName] = '';
-                    this.updateJSON();
-                    this.updateSegmentMetadataEditor(entity, this.selectedSegment);
-                }
-            } else {
-                const entity = this.entities.find(e => e.id === this.selectedEntity);
-                if (entity) {
-                    if (!entity.metadata) entity.metadata = {};
-                    entity.metadata[fieldName] = '';
-                    this.updateJSON();
-                    this.updateMetadataEditor(entity);
-                }
+            const entity = this.entities.find(e => e.id === this.selectedEntity);
+            if (entity) {
+                if (!entity.metadata) entity.metadata = {};
+                entity.metadata[fieldName] = '';
+                this.updateJSON();
+                this.updateMetadataEditor(entity);
             }
         }
     }
@@ -836,7 +547,7 @@ class ParametricDrawingApp {
                 
             case 'circle':
                 const center = this.denormalizeCoordinates(entity.center[0], entity.center[1]);
-                const radius = entity.radius * this.gridSize;
+                const radius = entity.radius * Math.min(this.canvas.width, this.canvas.height);
                 const dist = Math.sqrt(Math.pow(x - center.x, 2) + Math.pow(y - center.y, 2));
                 return Math.abs(dist - radius) < threshold;
                 
@@ -901,7 +612,6 @@ class ParametricDrawingApp {
             !c.entities.includes(entityId)
         );
         this.selectedEntity = null;
-        this.selectedSegment = null;
         this.updateJSON();
         this.render();
     }
@@ -910,7 +620,6 @@ class ParametricDrawingApp {
         this.entities = [];
         this.constraints = [];
         this.selectedEntity = null;
-        this.selectedSegment = null;
         this.idCounter = 1;
         this.updateJSON();
         this.render();
@@ -1032,61 +741,12 @@ class ParametricDrawingApp {
             const isSelected = entity.id === this.selectedEntity;
             const isHovered = entity.id === this.hoveredEntity;
             
-            if (entity.type === 'polyline' && entity.segments && isSelected) {
-                this.drawPolylineWithSegments(entity, isHovered);
-            } else {
-                const color = entity.metadata?.color || '#00ff88';
-                this.ctx.strokeStyle = isSelected ? '#0088ff' : (isHovered ? '#ffaa00' : color);
-                this.ctx.lineWidth = (isSelected || isHovered) ? 2 : 1;
-                this.drawEntity(entity);
-            }
+            const color = entity.metadata?.color || '#00ff88';
+            this.ctx.strokeStyle = isSelected ? '#0088ff' : (isHovered ? '#ffaa00' : color);
+            this.ctx.lineWidth = (isSelected || isHovered) ? 2 : 1;
+            
+            this.drawEntity(entity);
         });
-    }
-    
-    drawPolylineWithSegments(entity, isHovered) {
-        for (let i = 0; i < entity.points.length - 1; i++) {
-            const p1 = this.denormalizeCoordinates(entity.points[i][0], entity.points[i][1]);
-            const p2 = this.denormalizeCoordinates(entity.points[i + 1][0], entity.points[i + 1][1]);
-            
-            let segmentColor = entity.metadata?.color || '#00ff88';
-            if (entity.segments && entity.segments[i] && entity.segments[i].metadata?.color) {
-                segmentColor = entity.segments[i].metadata.color;
-            }
-            
-            const isSegmentSelected = this.selectedSegment === i;
-            this.ctx.strokeStyle = isSegmentSelected ? '#ff00ff' : 
-                                  (isHovered ? '#ffaa00' : segmentColor);
-            this.ctx.lineWidth = isSegmentSelected ? 3 : 2;
-            
-            this.ctx.beginPath();
-            this.ctx.moveTo(p1.x, p1.y);
-            this.ctx.lineTo(p2.x, p2.y);
-            this.ctx.stroke();
-        }
-        
-        if (entity.closed && entity.points.length > 2) {
-            const first = this.denormalizeCoordinates(entity.points[0][0], entity.points[0][1]);
-            const last = this.denormalizeCoordinates(
-                entity.points[entity.points.length - 1][0],
-                entity.points[entity.points.length - 1][1]
-            );
-            
-            let segmentColor = entity.metadata?.color || '#00ff88';
-            const lastIndex = entity.points.length - 1;
-            if (entity.segments && entity.segments[lastIndex] && entity.segments[lastIndex].metadata?.color) {
-                segmentColor = entity.segments[lastIndex].metadata.color;
-            }
-            
-            const isSegmentSelected = this.selectedSegment === lastIndex;
-            this.ctx.strokeStyle = isSegmentSelected ? '#ff00ff' : 
-                                  (isHovered ? '#ffaa00' : segmentColor);
-            this.ctx.lineWidth = isSegmentSelected ? 3 : 2;
-            
-            this.ctx.beginPath();
-            this.ctx.moveTo(last.x, last.y);
-            this.ctx.lineTo(first.x, first.y);
-            this.ctx.stroke();
-        }
     }
     
     drawEntity(entity) {
@@ -1110,7 +770,7 @@ class ParametricDrawingApp {
                 
             case 'circle':
                 const center = this.denormalizeCoordinates(entity.center[0], entity.center[1]);
-                const radius = entity.radius * this.gridSize;
+                const radius = entity.radius * Math.min(this.canvas.width, this.canvas.height);
                 this.ctx.beginPath();
                 this.ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
                 this.ctx.stroke();
@@ -1118,7 +778,7 @@ class ParametricDrawingApp {
                 
             case 'arc':
                 const arcCenter = this.denormalizeCoordinates(entity.center[0], entity.center[1]);
-                const arcRadius = entity.radius * this.gridSize;
+                const arcRadius = entity.radius * Math.min(this.canvas.width, this.canvas.height);
                 this.ctx.beginPath();
                 this.ctx.arc(arcCenter.x, arcCenter.y, arcRadius, 
                     entity.startAngle, entity.endAngle);
@@ -1218,9 +878,7 @@ class ParametricDrawingApp {
     updateJSON() {
         const data = {
             version: "1.0",
-            units: "grid",
-            gridSize: this.gridSize,
-            origin: [Math.round(this.origin.x / this.gridSize), Math.round(this.origin.y / this.gridSize)],
+            units: "normalized",
             entities: this.entities,
             constraints: this.constraints
         };
@@ -1269,40 +927,12 @@ class ParametricDrawingApp {
                     if (match) {
                         maxId = Math.max(maxId, parseInt(match[1]));
                     }
-                    
-                    // Ensure polylines have segment IDs
-                    if (entity.type === 'polyline') {
-                        if (!entity.segments || entity.segments.length === 0) {
-                            const segmentCount = entity.closed ? entity.points.length : entity.points.length - 1;
-                            entity.segments = [];
-                            for (let i = 0; i < segmentCount; i++) {
-                                entity.segments.push({
-                                    id: `${entity.id}_seg_${i}`,
-                                    metadata: {}
-                                });
-                            }
-                        } else {
-                            // Ensure all segments have IDs
-                            entity.segments.forEach((seg, i) => {
-                                if (!seg.id) {
-                                    seg.id = `${entity.id}_seg_${i}`;
-                                }
-                            });
-                        }
-                    }
                 });
                 this.idCounter = maxId + 1;
             }
             
             if (data.constraints && Array.isArray(data.constraints)) {
                 this.constraints = data.constraints;
-            }
-            
-            if (data.origin && Array.isArray(data.origin)) {
-                this.origin = {
-                    x: data.origin[0] * this.gridSize,
-                    y: data.origin[1] * this.gridSize
-                };
             }
             
             this.render();
@@ -1329,14 +959,6 @@ class ParametricDrawingApp {
                 type: type,
                 entities: [this.selectedEntity]
             };
-            
-            if (this.selectedSegment !== null) {
-                const entity = this.entities.find(e => e.id === this.selectedEntity);
-                if (entity && entity.segments && entity.segments[this.selectedSegment]) {
-                    constraint.segmentId = entity.segments[this.selectedSegment].id;
-                    constraint.segmentIndex = this.selectedSegment;
-                }
-            }
             
             if (type === 'distance' || type === 'angle' || type === 'ratio') {
                 const value = prompt(`Enter ${type} value:`);
@@ -1368,11 +990,6 @@ class ParametricDrawingApp {
             item.className = 'constraint-item';
             
             let text = `${constraint.type}: ${constraint.entities.join(', ')}`;
-            if (constraint.segmentId) {
-                text += ` (${constraint.segmentId})`;
-            } else if (constraint.segment !== undefined) {
-                text += ` (segment ${constraint.segment + 1})`;
-            }
             if (constraint.value !== undefined) {
                 text += ` = ${constraint.value}`;
             }
@@ -1394,9 +1011,7 @@ class ParametricDrawingApp {
     exportDrawing() {
         const data = {
             version: "1.0",
-            units: "grid",
-            gridSize: this.gridSize,
-            origin: [Math.round(this.origin.x / this.gridSize), Math.round(this.origin.y / this.gridSize)],
+            units: "normalized",
             entities: this.entities,
             constraints: this.constraints,
             metadata: {
