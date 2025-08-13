@@ -13,6 +13,10 @@ class ParametricDrawingApp {
         this.hoveredEntity = null;
         this.hoveredSegmentId = null;
         this.selectedSegment = null;
+        
+        // Multi-selection
+        this.selectedItems = []; // Array of {entityId, segmentIndex?}
+        this.isMultiSelecting = false;
         this.isDragging = false;
         this.dragStart = null;
         this.dragEntity = null;
@@ -107,7 +111,7 @@ class ParametricDrawingApp {
         });
         
         document.getElementById('add-constraint').addEventListener('click', () => {
-            this.showConstraintDialog();
+            this.showAdvancedConstraintDialog();
         });
         
         document.getElementById('origin-btn').addEventListener('click', () => {
@@ -531,24 +535,44 @@ class ParametricDrawingApp {
             const entity = this.getEntityAt(worldX, worldY);
             
             if (entity) {
-                if (this.selectedEntity === entity.id && entity.type === 'polyline') {
-                    const segment = this.getSegmentAt(worldX, worldY, entity);
-                    if (segment !== null) {
-                        this.selectedSegment = segment;
-                        this.updateSegmentMetadataEditor(entity, segment);
+                if (this.isMultiSelecting) {
+                    // Multi-selection with Shift
+                    if (entity.type === 'polyline') {
+                        const segment = this.getSegmentAt(worldX, worldY, entity);
+                        if (segment !== null) {
+                            this.addToSelection(entity.id, segment);
+                        } else {
+                            this.addToSelection(entity.id, null);
+                        }
+                    } else {
+                        this.addToSelection(entity.id, null);
                     }
                 } else {
-                    this.selectEntity(entity);
-                    this.selectedSegment = null;
+                    // Single selection
+                    if (this.selectedEntity === entity.id && entity.type === 'polyline') {
+                        const segment = this.getSegmentAt(worldX, worldY, entity);
+                        if (segment !== null) {
+                            this.selectedSegment = segment;
+                            this.selectedItems = [{entityId: entity.id, segmentIndex: segment}];
+                            this.updateSegmentMetadataEditor(entity, segment);
+                        }
+                    } else {
+                        this.selectEntity(entity);
+                        this.selectedSegment = null;
+                        this.selectedItems = [{entityId: entity.id, segmentIndex: null}];
+                    }
+                    
+                    this.isDragging = true;
+                    this.dragStart = { ...gridPos };
+                    this.dragEntity = entity;
+                    this.canvas.style.cursor = 'move';
                 }
-                
-                this.isDragging = true;
-                this.dragStart = { ...gridPos };
-                this.dragEntity = entity;
-                this.canvas.style.cursor = 'move';
             } else {
-                this.selectEntity(null);
-                this.selectedSegment = null;
+                if (!this.isMultiSelecting) {
+                    this.selectEntity(null);
+                    this.selectedSegment = null;
+                    this.selectedItems = [];
+                }
             }
         } else if (this.currentTool === 'polyline') {
             if (!this.isDrawingPolyline) {
@@ -656,6 +680,9 @@ class ParametricDrawingApp {
     }
     
     handleKeyDown(e) {
+        // Track shift key for multi-selection
+        this.isMultiSelecting = e.shiftKey;
+        
         // Prevent default for our shortcuts
         if ((e.ctrlKey || e.metaKey) && ['z', 'y', 'c', 'v', 'd'].includes(e.key.toLowerCase())) {
             e.preventDefault();
@@ -671,9 +698,17 @@ class ParametricDrawingApp {
             this.isDrawing = false;
             this.tempShape = null;
             this.render();
-        } else if (e.key === 'Delete' && this.selectedEntity) {
-            this.saveState();
-            this.deleteEntity(this.selectedEntity);
+        } else if (e.key === 'Delete') {
+            if (this.selectedItems.length > 0) {
+                this.saveState();
+                this.selectedItems.forEach(item => {
+                    this.deleteEntity(item.entityId);
+                });
+                this.selectedItems = [];
+            } else if (this.selectedEntity) {
+                this.saveState();
+                this.deleteEntity(this.selectedEntity);
+            }
         } else if (e.key === 'c' && this.currentTool === 'polyline' && this.isDrawingPolyline) {
             if (this.polylinePoints.length > 2) {
                 this.saveState();
@@ -709,6 +744,9 @@ class ParametricDrawingApp {
     }
     
     handleKeyUp(e) {
+        if (e.key === 'Shift') {
+            this.isMultiSelecting = false;
+        }
         if (e.key === ' ') {
             this.isPanning = false;
             this.panStart = null;
@@ -894,6 +932,77 @@ H         Show this help
             this.clearMetadataEditor();
         }
         this.render();
+    }
+    
+    addToSelection(entityId, segmentIndex) {
+        // Check if already selected
+        const existingIndex = this.selectedItems.findIndex(item => 
+            item.entityId === entityId && item.segmentIndex === segmentIndex
+        );
+        
+        if (existingIndex >= 0) {
+            // Remove from selection
+            this.selectedItems.splice(existingIndex, 1);
+        } else {
+            // Add to selection
+            this.selectedItems.push({ entityId, segmentIndex });
+        }
+        
+        // Update UI to show multi-selection
+        this.updateMultiSelectionUI();
+        this.render();
+    }
+    
+    updateMultiSelectionUI() {
+        const container = document.getElementById('entity-metadata');
+        const addButton = document.getElementById('add-metadata-field');
+        
+        if (this.selectedItems.length === 0) {
+            this.clearMetadataEditor();
+        } else if (this.selectedItems.length === 1) {
+            const item = this.selectedItems[0];
+            const entity = this.entities.find(e => e.id === item.entityId);
+            if (entity) {
+                if (item.segmentIndex !== null && item.segmentIndex !== undefined) {
+                    this.updateSegmentMetadataEditor(entity, item.segmentIndex);
+                } else {
+                    this.updateMetadataEditor(entity);
+                }
+            }
+        } else {
+            // Multiple items selected
+            container.innerHTML = `
+                <div class="metadata-field">
+                    <label>Selection</label>
+                    <input type="text" value="${this.selectedItems.length} items selected" readonly style="opacity: 0.7">
+                </div>
+                <div class="metadata-field">
+                    <button id="create-constraint-btn" style="width: 100%; padding: 8px; background: #0066cc; border: none; color: white; border-radius: 4px; cursor: pointer;">
+                        Create Constraint
+                    </button>
+                </div>
+                <div class="metadata-field">
+                    <label>Selected Items:</label>
+                    <div style="max-height: 150px; overflow-y: auto; background: #2a2a2a; padding: 5px; border-radius: 3px; font-size: 11px;">
+                        ${this.selectedItems.map(item => {
+                            const entity = this.entities.find(e => e.id === item.entityId);
+                            if (item.segmentIndex !== null && item.segmentIndex !== undefined) {
+                                return `<div>${item.entityId} - Segment ${item.segmentIndex}</div>`;
+                            } else {
+                                return `<div>${item.entityId} (${entity?.type})</div>`;
+                            }
+                        }).join('')}
+                    </div>
+                </div>
+            `;
+            
+            addButton.style.display = 'none';
+            
+            // Add constraint button listener
+            document.getElementById('create-constraint-btn')?.addEventListener('click', () => {
+                this.showAdvancedConstraintDialog();
+            });
+        }
     }
     
     highlightEntityInJSON(entityId) {
@@ -1380,6 +1489,7 @@ H         Show this help
         this.constraints = [];
         this.selectedEntity = null;
         this.selectedSegment = null;
+        this.selectedItems = [];
         this.idCounter = 1;
         this.updateJSON();
         this.render();
@@ -1565,13 +1675,14 @@ H         Show this help
         this.entities.forEach(entity => {
             const isSelected = entity.id === this.selectedEntity;
             const isHovered = entity.id === this.hoveredEntity;
+            const isInMultiSelection = this.selectedItems.some(item => item.entityId === entity.id);
             
-            if (entity.type === 'polyline' && entity.segments && (isSelected || this.hoveredSegmentId?.startsWith(entity.id))) {
+            if (entity.type === 'polyline' && entity.segments && (isSelected || isInMultiSelection || this.hoveredSegmentId?.startsWith(entity.id))) {
                 this.drawPolylineWithSegments(entity, isHovered);
             } else {
                 const color = entity.metadata?.color || '#00ff88';
-                this.ctx.strokeStyle = isSelected ? '#0088ff' : (isHovered ? '#ffaa00' : color);
-                this.ctx.lineWidth = (isSelected || isHovered) ? 2 / this.zoom : 1 / this.zoom;
+                this.ctx.strokeStyle = isInMultiSelection ? '#ff00ff' : (isSelected ? '#0088ff' : (isHovered ? '#ffaa00' : color));
+                this.ctx.lineWidth = (isSelected || isHovered || isInMultiSelection) ? 2 / this.zoom : 1 / this.zoom;
                 this.drawEntity(entity);
             }
         });
@@ -1587,13 +1698,17 @@ H         Show this help
                 segmentColor = entity.segments[i].metadata.color;
             }
             
-            const isSegmentSelected = this.selectedSegment === i;
+            const isSegmentSelected = this.selectedSegment === i && this.selectedEntity === entity.id;
             const isSegmentHovered = this.hoveredSegmentId === `${entity.id}_seg_${i}`;
+            const isInMultiSelection = this.selectedItems.some(item => 
+                item.entityId === entity.id && item.segmentIndex === i
+            );
             
-            this.ctx.strokeStyle = isSegmentSelected ? '#ff00ff' : 
+            this.ctx.strokeStyle = isInMultiSelection ? '#ff00ff' :
+                                  (isSegmentSelected ? '#0088ff' : 
                                   (isSegmentHovered ? '#ff8800' :
-                                  (isHovered ? '#ffaa00' : segmentColor));
-            this.ctx.lineWidth = (isSegmentSelected || isSegmentHovered) ? 3 / this.zoom : 2 / this.zoom;
+                                  (isHovered ? '#ffaa00' : segmentColor)));
+            this.ctx.lineWidth = (isSegmentSelected || isSegmentHovered || isInMultiSelection) ? 3 / this.zoom : 2 / this.zoom;
             
             this.ctx.beginPath();
             this.ctx.moveTo(p1.x, p1.y);
@@ -1869,50 +1984,167 @@ H         Show this help
     }
     
     showConstraintDialog() {
-        const selectedEntities = this.entities.filter(e => e.id === this.selectedEntity);
-        
-        if (selectedEntities.length === 0) {
-            alert('Please select an entity first');
+        // Legacy constraint dialog - kept for compatibility
+        this.showAdvancedConstraintDialog();
+    }
+    
+    showAdvancedConstraintDialog() {
+        if (this.selectedItems.length === 0) {
+            alert('Please select one or more entities/segments first.\nUse Shift+Click for multi-selection.');
             return;
         }
         
-        const types = ['coincident', 'parallel', 'perpendicular', 'distance', 'angle', 'ratio'];
-        const type = prompt(`Enter constraint type:\n${types.join(', ')}`);
+        // Create modal dialog
+        const modal = document.createElement('div');
+        modal.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 10000;
+        `;
         
-        if (type && types.includes(type)) {
+        const dialog = document.createElement('div');
+        dialog.style.cssText = `
+            background: #2a2a2a;
+            border: 2px solid #444;
+            border-radius: 8px;
+            padding: 20px;
+            min-width: 400px;
+            max-width: 600px;
+            color: #e0e0e0;
+        `;
+        
+        // Build selected items summary
+        const itemsSummary = this.selectedItems.map(item => {
+            const entity = this.entities.find(e => e.id === item.entityId);
+            if (item.segmentIndex !== null && item.segmentIndex !== undefined) {
+                return `${item.entityId} (Segment ${item.segmentIndex})`;
+            }
+            return `${item.entityId} (${entity?.type})`;
+        }).join(', ');
+        
+        dialog.innerHTML = `
+            <h3 style="margin: 0 0 15px 0; color: #0088ff;">Create Constraint</h3>
+            <div style="margin-bottom: 15px; padding: 10px; background: #1a1a1a; border-radius: 4px;">
+                <strong>Selected:</strong> ${itemsSummary}
+            </div>
+            
+            <div style="margin-bottom: 15px;">
+                <label style="display: block; margin-bottom: 5px; font-size: 12px;">Constraint Type:</label>
+                <select id="constraint-type" style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #e0e0e0; border-radius: 4px;">
+                    <option value="">Select a constraint type...</option>
+                    <option value="coincident">Coincident - Points/lines occupy same position</option>
+                    <option value="parallel">Parallel - Lines maintain same angle</option>
+                    <option value="perpendicular">Perpendicular - Lines at 90°</option>
+                    <option value="distance">Distance - Fixed distance between</option>
+                    <option value="angle">Angle - Fixed angle between</option>
+                    <option value="ratio">Ratio - Proportional relationship</option>
+                    <option value="horizontal">Horizontal - Force horizontal</option>
+                    <option value="vertical">Vertical - Force vertical</option>
+                    <option value="equal">Equal - Same length/radius</option>
+                </select>
+            </div>
+            
+            <div id="constraint-value-div" style="margin-bottom: 15px; display: none;">
+                <label style="display: block; margin-bottom: 5px; font-size: 12px;">Value:</label>
+                <input id="constraint-value" type="number" step="any" style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #e0e0e0; border-radius: 4px;">
+            </div>
+            
+            <div id="constraint-description" style="margin-bottom: 15px; padding: 10px; background: #1a1a1a; border-radius: 4px; font-size: 12px; color: #888; display: none;">
+            </div>
+            
+            <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                <button id="cancel-constraint" style="padding: 8px 20px; background: #444; border: 1px solid #555; color: #e0e0e0; border-radius: 4px; cursor: pointer;">Cancel</button>
+                <button id="create-constraint" style="padding: 8px 20px; background: #0066cc; border: none; color: white; border-radius: 4px; cursor: pointer;">Create</button>
+            </div>
+        `;
+        
+        modal.appendChild(dialog);
+        document.body.appendChild(modal);
+        
+        // Event handlers
+        const typeSelect = document.getElementById('constraint-type');
+        const valueDiv = document.getElementById('constraint-value-div');
+        const descDiv = document.getElementById('constraint-description');
+        
+        typeSelect.addEventListener('change', () => {
+            const type = typeSelect.value;
+            if (['distance', 'angle', 'ratio'].includes(type)) {
+                valueDiv.style.display = 'block';
+                document.getElementById('constraint-value').placeholder = 
+                    type === 'distance' ? 'Distance in grid units' :
+                    type === 'angle' ? 'Angle in degrees' :
+                    'Ratio (e.g., 2.5)';
+            } else {
+                valueDiv.style.display = 'none';
+            }
+            
+            // Show description
+            const descriptions = {
+                coincident: 'Forces selected points or lines to share the same position.',
+                parallel: 'Maintains parallel relationship between selected lines.',
+                perpendicular: 'Forces lines to maintain 90° angle.',
+                distance: 'Sets a fixed distance between selected entities.',
+                angle: 'Sets a fixed angle between selected lines.',
+                ratio: 'Maintains proportional relationship between lengths.',
+                horizontal: 'Forces line(s) to be horizontal.',
+                vertical: 'Forces line(s) to be vertical.',
+                equal: 'Makes selected entities have equal dimensions.'
+            };
+            
+            if (descriptions[type]) {
+                descDiv.style.display = 'block';
+                descDiv.textContent = descriptions[type];
+            } else {
+                descDiv.style.display = 'none';
+            }
+        });
+        
+        document.getElementById('cancel-constraint').addEventListener('click', () => {
+            document.body.removeChild(modal);
+        });
+        
+        document.getElementById('create-constraint').addEventListener('click', () => {
+            const type = typeSelect.value;
+            if (!type) {
+                alert('Please select a constraint type');
+                return;
+            }
+            
             const constraint = {
                 id: `constraint_${Date.now()}`,
                 type: type,
-                entities: [this.selectedEntity]
+                items: this.selectedItems.map(item => ({
+                    entityId: item.entityId,
+                    segmentIndex: item.segmentIndex,
+                    segmentId: item.segmentIndex !== null && item.segmentIndex !== undefined ? 
+                        this.entities.find(e => e.id === item.entityId)?.segments?.[item.segmentIndex]?.id : null
+                }))
             };
             
-            if (this.selectedSegment !== null) {
-                const entity = this.entities.find(e => e.id === this.selectedEntity);
-                if (entity && entity.segments && entity.segments[this.selectedSegment]) {
-                    constraint.segmentId = entity.segments[this.selectedSegment].id;
-                    constraint.segmentIndex = this.selectedSegment;
-                }
-            }
-            
-            if (type === 'distance' || type === 'angle' || type === 'ratio') {
-                const value = prompt(`Enter ${type} value:`);
-                if (value) {
-                    constraint.value = parseFloat(value);
-                } else {
+            if (['distance', 'angle', 'ratio'].includes(type)) {
+                const value = parseFloat(document.getElementById('constraint-value').value);
+                if (isNaN(value)) {
+                    alert('Please enter a valid number');
                     return;
                 }
-            }
-            
-            if (type !== 'distance') {
-                const otherEntity = prompt('Enter ID of second entity (or leave empty):');
-                if (otherEntity && this.entities.find(e => e.id === otherEntity)) {
-                    constraint.entities.push(otherEntity);
-                }
+                constraint.value = value;
             }
             
             this.constraints.push(constraint);
             this.updateJSON();
-        }
+            document.body.removeChild(modal);
+            this.showNotification(`Constraint created: ${type}`);
+        });
+        
+        // Focus on type select
+        typeSelect.focus();
     }
     
     updateConstraintsList() {
@@ -1923,23 +2155,70 @@ H         Show this help
             const item = document.createElement('div');
             item.className = 'constraint-item';
             
-            let text = `${constraint.type}: ${constraint.entities.join(', ')}`;
-            if (constraint.segmentId) {
-                text += ` (${constraint.segmentId})`;
-            } else if (constraint.segment !== undefined) {
-                text += ` (segment ${constraint.segment + 1})`;
+            let text = `${constraint.type}: `;
+            
+            // Handle new format with items array
+            if (constraint.items && constraint.items.length > 0) {
+                const itemDescriptions = constraint.items.map(item => {
+                    if (item.segmentId) {
+                        return item.segmentId;
+                    } else if (item.segmentIndex !== null && item.segmentIndex !== undefined) {
+                        return `${item.entityId}_seg_${item.segmentIndex}`;
+                    }
+                    return item.entityId;
+                });
+                text += itemDescriptions.join(', ');
+            } else if (constraint.entities) {
+                // Handle legacy format
+                text += constraint.entities.join(', ');
+                if (constraint.segmentId) {
+                    text += ` (${constraint.segmentId})`;
+                } else if (constraint.segment !== undefined) {
+                    text += ` (segment ${constraint.segment + 1})`;
+                }
             }
+            
             if (constraint.value !== undefined) {
-                text += ` = ${constraint.value}`;
+                const unit = constraint.type === 'angle' ? '°' : 
+                            constraint.type === 'ratio' ? 'x' : ' units';
+                text += ` = ${constraint.value}${unit}`;
             }
             
             item.innerHTML = `
-                <span>${text}</span>
+                <span style="font-size: 11px;">${text}</span>
                 <button onclick="app.removeConstraint('${constraint.id}')">Remove</button>
             `;
             
+            item.addEventListener('mouseenter', () => {
+                this.highlightConstraintItems(constraint);
+            });
+            
+            item.addEventListener('mouseleave', () => {
+                this.clearConstraintHighlight();
+            });
+            
             list.appendChild(item);
         });
+    }
+    
+    highlightConstraintItems(constraint) {
+        if (constraint.items) {
+            this.selectedItems = constraint.items.map(item => ({
+                entityId: item.entityId,
+                segmentIndex: item.segmentIndex
+            }));
+        } else if (constraint.entities) {
+            this.selectedItems = constraint.entities.map(entityId => ({
+                entityId: entityId,
+                segmentIndex: constraint.segmentIndex || null
+            }));
+        }
+        this.render();
+    }
+    
+    clearConstraintHighlight() {
+        this.selectedItems = [];
+        this.render();
     }
     
     removeConstraint(constraintId) {
