@@ -23,7 +23,7 @@ class ParametricDrawingApp {
         
         this.entities = [];
         this.constraints = [];
-        this.idCounter = 1;
+        this.idCounter = 1; // kept for compatibility but not used for IDs
         
         this.mousePos = { x: 0, y: 0 };
         this.gridPos = { x: 0, y: 0 };
@@ -57,6 +57,10 @@ class ParametricDrawingApp {
         this.showGrid = true;
         
         this.init();
+    }
+
+    generateId() {
+        return `entity_${Math.random().toString(36).substr(2,4)}`;
     }
     
     init() {
@@ -98,16 +102,49 @@ class ParametricDrawingApp {
             this.clearDrawing();
         });
         
-        document.getElementById('export-btn').addEventListener('click', () => {
-            this.exportDrawing();
-        });
-        
         document.getElementById('format-json').addEventListener('click', () => {
             this.formatJSON();
         });
-        
+
         document.getElementById('validate-json').addEventListener('click', () => {
             this.validateJSON();
+        });
+
+        document.getElementById('copy-json').addEventListener('click', () => {
+            navigator.clipboard.writeText(this.jsonEditor.value);
+        });
+
+        document.getElementById('save-json').addEventListener('click', () => {
+            const blob = new Blob([this.jsonEditor.value], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'drawing.json';
+            a.click();
+            URL.revokeObjectURL(url);
+        });
+
+        const fileInput = document.getElementById('json-file-input');
+        document.getElementById('open-json').addEventListener('click', () => {
+            fileInput.click();
+        });
+        fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = () => {
+                this.jsonEditor.value = reader.result;
+                this.handleJSONEdit();
+            };
+            reader.readAsText(file);
+        });
+
+        document.getElementById('undo-btn').addEventListener('click', () => {
+            this.undo();
+        });
+
+        document.getElementById('redo-btn').addEventListener('click', () => {
+            this.redo();
         });
         
         document.getElementById('add-constraint').addEventListener('click', () => {
@@ -225,12 +262,13 @@ class ParametricDrawingApp {
         if (this.clipboard) {
             this.saveState();
             const newEntity = JSON.parse(JSON.stringify(this.clipboard));
-            newEntity.id = `entity_${this.idCounter++}`;
+            newEntity.id = this.generateId();
             
             // Offset the pasted entity
             const offset = 2; // Grid units
             switch (newEntity.type) {
                 case 'line':
+                case 'dimension':
                     newEntity.start[0] += offset;
                     newEntity.start[1] += offset;
                     newEntity.end[0] += offset;
@@ -300,7 +338,6 @@ class ParametricDrawingApp {
             'Ctrl+V: Paste',
             'Ctrl+D: Duplicate',
             'Delete: Delete',
-            'G: Toggle Grid',
             'D: Toggle Dimensions',
             'ESC: Cancel',
             'C (in polyline): Close',
@@ -354,7 +391,7 @@ class ParametricDrawingApp {
                     const line = lines[lineIdx];
                     
                     // Check for segment ID first (more specific)
-                    const segmentMatch = line.match(/"id"\s*:\s*"(entity_\d+_seg_\d+)"/);
+                    const segmentMatch = line.match(/"id"\s*:\s*"(entity_[A-Za-z0-9]{4}_seg_\d+)"/);
                     if (segmentMatch) {
                         segmentId = segmentMatch[1];
                         entityId = segmentMatch[1].split('_seg_')[0];
@@ -362,7 +399,7 @@ class ParametricDrawingApp {
                     }
                     
                     // Check for entity ID
-                    const entityMatch = line.match(/"id"\s*:\s*"(entity_\d+)"/);
+                    const entityMatch = line.match(/"id"\s*:\s*"(entity_[A-Za-z0-9]{4})"/);
                     if (entityMatch && !entityMatch[1].includes('_seg_')) {
                         entityId = entityMatch[1];
                         break;
@@ -441,6 +478,7 @@ class ParametricDrawingApp {
         this.entities.forEach(entity => {
             switch (entity.type) {
                 case 'line':
+                case 'dimension':
                     const oldStart = this.denormalizeWithOrigin(entity.start[0], entity.start[1], oldOrigin);
                     const oldEnd = this.denormalizeWithOrigin(entity.end[0], entity.end[1], oldOrigin);
                     const newStart = this.normalizeCoordinates(oldStart.x, oldStart.y);
@@ -569,7 +607,9 @@ class ParametricDrawingApp {
                         this.selectedItems = [{entityId: entity.id, segmentIndex: null}];
                         this.updateMetadataEditor(entity);
                     }
-                    
+
+                    this.highlightEntityInJSON(entity.id, false);
+
                     this.isDragging = true;
                     this.dragStart = { ...gridPos };
                     this.dragEntity = entity;
@@ -582,6 +622,7 @@ class ParametricDrawingApp {
                     this.selectedSegment = null;
                     this.selectedItems = [];
                     this.clearMetadataEditor();
+                    this.clearJSONHighlight();
                     this.render();
                 }
             }
@@ -630,11 +671,14 @@ class ParametricDrawingApp {
         if (this.isDragging && this.dragEntity) {
             const dx = (this.gridPos.x - this.dragStart.x) / this.gridSize;
             const dy = (this.gridPos.y - this.dragStart.y) / this.gridSize;
-            
+
             if (dx !== 0 || dy !== 0) {
                 this.moveEntity(this.dragEntity, dx, dy);
                 this.dragStart = { ...this.gridPos };
                 this.updateJSON();
+                if (this.selectedEntity) {
+                    this.highlightEntityInJSON(this.selectedEntity, false);
+                }
                 this.render();
             }
         } else if (this.isDrawing && this.tempShape) {
@@ -643,17 +687,46 @@ class ParametricDrawingApp {
             const worldX = (x - this.panOffset.x) / this.zoom;
             const worldY = (y - this.panOffset.y) / this.zoom;
             const entity = this.getEntityAt(worldX, worldY);
+
+            // Determine hovered entity/segment
+            let hoveredId = null;
+            let hoveredSegment = null;
+            if (entity) {
+                hoveredId = entity.id;
+                if (entity.type === 'polyline') {
+                    const seg = this.getSegmentAt(worldX, worldY, entity);
+                    if (seg !== null) {
+                        hoveredSegment = `${entity.id}_seg_${seg}`;
+                    }
+                }
+            }
+
+            if (hoveredId !== this.hoveredEntity || hoveredSegment !== this.hoveredSegmentId) {
+                this.hoveredEntity = hoveredId;
+                this.hoveredSegmentId = hoveredSegment;
+
+                if (this.hoveredEntity) {
+                    this.highlightEntityInJSON(this.hoveredEntity, false);
+                } else if (this.selectedEntity) {
+                    this.highlightEntityInJSON(this.selectedEntity, false);
+                } else {
+                    this.clearJSONHighlight();
+                }
+
+                this.render();
+            }
+
             this.canvas.style.cursor = entity ? 'move' : 'default';
         }
-        
+
         const worldMouseX = (x - this.panOffset.x) / this.zoom;
         const worldMouseY = (y - this.panOffset.y) / this.zoom;
         const dist = Math.sqrt(
-            Math.pow(this.gridPos.x - worldMouseX, 2) + 
+            Math.pow(this.gridPos.x - worldMouseX, 2) +
             Math.pow(this.gridPos.y - worldMouseY, 2)
         );
         this.snapIndicator = dist < this.snapThreshold ? this.gridPos : null;
-        
+
         this.render();
     }
     
@@ -750,9 +823,6 @@ class ParametricDrawingApp {
             this.pasteEntity();
         } else if ((e.ctrlKey || e.metaKey) && e.key === 'd') {
             this.duplicateEntity();
-        } else if (e.key === 'g' || e.key === 'G') {
-            this.showGrid = !this.showGrid;
-            this.render();
         } else if (e.key === 'd' || e.key === 'D') {
             if (!e.ctrlKey && !e.metaKey) {
                 this.showDimensions = !this.showDimensions;
@@ -793,7 +863,6 @@ Ctrl+V       Paste entity
 Ctrl+D       Duplicate entity
 
 View:
-G            Toggle grid
 D            Toggle dimensions
 Space        Pan view (hold)
 Scroll       Zoom in/out
@@ -846,6 +915,7 @@ H            Show this help
     moveEntity(entity, dx, dy) {
         switch (entity.type) {
             case 'line':
+            case 'dimension':
                 entity.start[0] += dx;
                 entity.start[1] += dy;
                 entity.end[0] += dx;
@@ -876,7 +946,7 @@ H            Show this help
     
     addEntity(shape) {
         const entity = {
-            id: `entity_${this.idCounter++}`,
+            id: this.generateId(),
             type: shape.type,
             metadata: {
                 color: this.defaultColors[this.colorIndex % this.defaultColors.length]
@@ -886,6 +956,7 @@ H            Show this help
         
         switch (shape.type) {
             case 'line':
+            case 'dimension':
                 const startNorm = this.normalizeCoordinates(shape.start.x, shape.start.y);
                 const endNorm = this.normalizeCoordinates(shape.end.x, shape.end.y);
                 entity.start = [startNorm.x, startNorm.y];
@@ -979,7 +1050,7 @@ H            Show this help
             // Add to selection
             this.selectedItems.push({ entityId, segmentIndex });
         }
-        
+
         // Update the main selected entity for reference
         if (this.selectedItems.length > 0) {
             const lastItem = this.selectedItems[this.selectedItems.length - 1];
@@ -989,7 +1060,13 @@ H            Show this help
             this.selectedEntity = null;
             this.selectedSegment = null;
         }
-        
+
+        if (this.selectedEntity) {
+            this.highlightEntityInJSON(this.selectedEntity, false);
+        } else {
+            this.clearJSONHighlight();
+        }
+
         // Update UI to show multi-selection
         this.updateMultiSelectionUI();
         this.render();
@@ -1029,6 +1106,7 @@ H            Show this help
                         ${this.selectedItems.map((item, index) => {
                             const entity = this.entities.find(e => e.id === item.entityId);
                             const icon = entity?.type === 'line' ? '━' :
+                                        entity?.type === 'dimension' ? '↔' :
                                         entity?.type === 'circle' ? '○' :
                                         entity?.type === 'rectangle' ? '□' :
                                         entity?.type === 'polyline' ? '⟨⟩' :
@@ -1055,8 +1133,14 @@ H            Show this help
         }
     }
     
-    highlightEntityInJSON(entityId) {
+    highlightEntityInJSON(entityId, focus = true) {
         try {
+            // When the JSON editor currently has focus, avoid disturbing the user's
+            // cursor/selection if we're merely highlighting due to canvas events.
+            if (!focus && document.activeElement === this.jsonEditor) {
+                return;
+            }
+
             const text = this.jsonEditor.value;
             const lines = text.split('\n');
             let entityStartLine = -1;
@@ -1100,7 +1184,9 @@ H            Show this help
                     endPos += lines[i].length + 1;
                 }
                 
-                this.jsonEditor.focus();
+                if (focus) {
+                    this.jsonEditor.focus();
+                }
                 this.jsonEditor.setSelectionRange(startPos, endPos - 1);
                 
                 const lineHeight = this.jsonEditor.scrollHeight / lines.length;
@@ -1208,6 +1294,7 @@ H            Show this help
     getEntityDimensions(entity) {
         switch (entity.type) {
             case 'line':
+            case 'dimension':
                 const length = Math.sqrt(
                     Math.pow(entity.end[0] - entity.start[0], 2) +
                     Math.pow(entity.end[1] - entity.start[1], 2)
@@ -1452,6 +1539,7 @@ H            Show this help
         
         switch (entity.type) {
             case 'line':
+            case 'dimension':
                 const start = this.denormalizeCoordinates(entity.start[0], entity.start[1]);
                 const end = this.denormalizeCoordinates(entity.end[0], entity.end[1]);
                 return this.distanceToLine(x, y, start, end) < threshold;
@@ -1813,6 +1901,30 @@ H            Show this help
                 this.ctx.lineTo(end.x, end.y);
                 this.ctx.stroke();
                 break;
+
+            case 'dimension':
+                const dStart = this.denormalizeCoordinates(entity.start[0], entity.start[1]);
+                const dEnd = this.denormalizeCoordinates(entity.end[0], entity.end[1]);
+                this.ctx.beginPath();
+                this.ctx.moveTo(dStart.x, dStart.y);
+                this.ctx.lineTo(dEnd.x, dEnd.y);
+                this.ctx.stroke();
+                this.drawArrowhead(dStart, dEnd);
+                this.drawArrowhead(dEnd, dStart);
+                const dLength = Math.sqrt(
+                    Math.pow(entity.end[0] - entity.start[0], 2) +
+                    Math.pow(entity.end[1] - entity.start[1], 2)
+                );
+                const midX = (dStart.x + dEnd.x) / 2;
+                const midY = (dStart.y + dEnd.y) / 2;
+                this.ctx.save();
+                this.ctx.fillStyle = this.ctx.strokeStyle;
+                this.ctx.font = `${12 / this.zoom}px sans-serif`;
+                this.ctx.textAlign = 'center';
+                this.ctx.textBaseline = 'bottom';
+                this.ctx.fillText(dLength.toFixed(1), midX, midY - 5 / this.zoom);
+                this.ctx.restore();
+                break;
                 
             case 'rectangle':
                 const tl = this.denormalizeCoordinates(entity.topLeft[0], entity.topLeft[1]);
@@ -1862,6 +1974,23 @@ H            Show this help
                 break;
         }
     }
+
+    drawArrowhead(from, to) {
+        const headLength = 8 / this.zoom;
+        const angle = Math.atan2(to.y - from.y, to.x - from.x);
+        this.ctx.beginPath();
+        this.ctx.moveTo(to.x, to.y);
+        this.ctx.lineTo(
+            to.x - headLength * Math.cos(angle - Math.PI / 6),
+            to.y - headLength * Math.sin(angle - Math.PI / 6)
+        );
+        this.ctx.moveTo(to.x, to.y);
+        this.ctx.lineTo(
+            to.x - headLength * Math.cos(angle + Math.PI / 6),
+            to.y - headLength * Math.sin(angle + Math.PI / 6)
+        );
+        this.ctx.stroke();
+    }
     
     drawTempShape() {
         this.ctx.strokeStyle = '#ffaa00';
@@ -1870,6 +1999,7 @@ H            Show this help
         
         switch (this.tempShape.type) {
             case 'line':
+            case 'dimension':
                 this.ctx.beginPath();
                 this.ctx.moveTo(this.tempShape.start.x, this.tempShape.start.y);
                 this.ctx.lineTo(this.tempShape.end.x, this.tempShape.end.y);
@@ -1973,74 +2103,88 @@ H            Show this help
     handleJSONEdit() {
         try {
             const data = JSON.parse(this.jsonEditor.value);
-            
+
             if (data.entities && Array.isArray(data.entities)) {
-                this.entities = data.entities;
-                
-                let maxId = 0;
-                this.entities.forEach(entity => {
-                    const match = entity.id.match(/entity_(\d+)/);
-                    if (match) {
-                        maxId = Math.max(maxId, parseInt(match[1]));
-                    }
-                    
-                    // Ensure polylines have segment IDs and correct count
-                    if (entity.type === 'polyline') {
-                        const expectedSegmentCount = entity.closed ? entity.points.length : entity.points.length - 1;
-                        
-                        if (!entity.segments) {
-                            entity.segments = [];
-                        }
-                        
-                        // Adjust segment array to match expected count
-                        if (entity.segments.length !== expectedSegmentCount) {
-                            // Preserve existing segments where possible
-                            const oldSegments = [...entity.segments];
-                            entity.segments = [];
-                            
-                            for (let i = 0; i < expectedSegmentCount; i++) {
-                                if (oldSegments[i]) {
-                                    entity.segments.push(oldSegments[i]);
-                                    if (!oldSegments[i].id) {
-                                        oldSegments[i].id = `${entity.id}_seg_${i}`;
-                                    }
-                                } else {
-                                    entity.segments.push({
-                                        id: `${entity.id}_seg_${i}`,
-                                        metadata: {}
-                                    });
-                                }
+                this.entities = data.entities.map(entity => {
+                    switch (entity.type) {
+                        case 'line':
+                        case 'dimension':
+                            entity.start = entity.start.map(Number);
+                            entity.end = entity.end.map(Number);
+                            break;
+
+                        case 'rectangle':
+                            entity.topLeft = entity.topLeft.map(Number);
+                            entity.bottomRight = entity.bottomRight.map(Number);
+                            break;
+
+                        case 'circle':
+                        case 'arc':
+                            entity.center = entity.center.map(Number);
+                            entity.radius = Number(entity.radius);
+                            if (entity.type === 'arc') {
+                                entity.startAngle = Number(entity.startAngle);
+                                entity.endAngle = Number(entity.endAngle);
                             }
-                        } else {
-                            // Ensure all segments have IDs
-                            entity.segments.forEach((seg, i) => {
-                                if (!seg.id) {
-                                    seg.id = `${entity.id}_seg_${i}`;
+                            break;
+
+                        case 'polyline':
+                            entity.points = entity.points.map(p => p.map(Number));
+                            const expectedSegmentCount = entity.closed ? entity.points.length : entity.points.length - 1;
+
+                            if (!entity.segments) {
+                                entity.segments = [];
+                            }
+
+                            if (entity.segments.length !== expectedSegmentCount) {
+                                const oldSegments = [...entity.segments];
+                                entity.segments = [];
+                                for (let i = 0; i < expectedSegmentCount; i++) {
+                                    if (oldSegments[i]) {
+                                        entity.segments.push(oldSegments[i]);
+                                        if (!oldSegments[i].id) {
+                                            oldSegments[i].id = `${entity.id}_seg_${i}`;
+                                        }
+                                    } else {
+                                        entity.segments.push({
+                                            id: `${entity.id}_seg_${i}`,
+                                            metadata: {},
+                                        });
+                                    }
                                 }
-                            });
-                        }
+                            } else {
+                                entity.segments.forEach((seg, i) => {
+                                    if (!seg.id) {
+                                        seg.id = `${entity.id}_seg_${i}`;
+                                    }
+                                });
+                            }
+                            break;
                     }
+
+                    if (!entity.metadata) entity.metadata = {};
+                    return entity;
                 });
-                this.idCounter = maxId + 1;
             }
-            
+
             if (data.constraints && Array.isArray(data.constraints)) {
                 this.constraints = data.constraints;
             }
-            
+
             if (data.origin && Array.isArray(data.origin)) {
                 this.origin = {
                     x: data.origin[0] * this.gridSize,
                     y: data.origin[1] * this.gridSize
                 };
             }
-            
+
             this.render();
             this.updateConstraintsList();
         } catch (e) {
             // Invalid JSON, ignore for now
         }
     }
+
     
     showConstraintDialog() {
         // Legacy constraint dialog - kept for compatibility
@@ -2098,24 +2242,21 @@ H            Show this help
                 <label style="display: block; margin-bottom: 5px; font-size: 12px;">Constraint Type:</label>
                 <select id="constraint-type" style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #e0e0e0; border-radius: 4px;">
                     <option value="">Select a constraint type...</option>
-                    <option value="coincident">Coincident - Points/lines occupy same position</option>
-                    <option value="parallel">Parallel - Lines maintain same angle</option>
-                    <option value="perpendicular">Perpendicular - Lines at 90°</option>
-                    <option value="distance">Distance - Fixed distance between</option>
-                    <option value="angle">Angle - Fixed angle between</option>
-                    <option value="ratio">Ratio - Proportional relationship</option>
-                    <option value="horizontal">Horizontal - Force horizontal</option>
-                    <option value="vertical">Vertical - Force vertical</option>
-                    <option value="equal">Equal - Same length/radius</option>
+                    <option value="coincident">Coincident</option>
+                    <option value="parallel">Parallel</option>
+                    <option value="perpendicular">Perpendicular</option>
+                    <option value="distance">Distance</option>
+                    <option value="angle">Angle</option>
+                    <option value="ratio">Ratio</option>
+                    <option value="horizontal">Horizontal</option>
+                    <option value="vertical">Vertical</option>
+                    <option value="equal">Equal</option>
                 </select>
             </div>
             
             <div id="constraint-value-div" style="margin-bottom: 15px; display: none;">
                 <label style="display: block; margin-bottom: 5px; font-size: 12px;">Value:</label>
                 <input id="constraint-value" type="number" step="any" style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #e0e0e0; border-radius: 4px;">
-            </div>
-            
-            <div id="constraint-description" style="margin-bottom: 15px; padding: 10px; background: #1a1a1a; border-radius: 4px; font-size: 12px; color: #888; display: none;">
             </div>
             
             <div style="display: flex; gap: 10px; justify-content: flex-end;">
@@ -2130,13 +2271,11 @@ H            Show this help
         // Event handlers
         const typeSelect = document.getElementById('constraint-type');
         const valueDiv = document.getElementById('constraint-value-div');
-        const descDiv = document.getElementById('constraint-description');
-        
         typeSelect.addEventListener('change', () => {
             const type = typeSelect.value;
             if (['distance', 'angle', 'ratio'].includes(type)) {
                 valueDiv.style.display = 'block';
-                document.getElementById('constraint-value').placeholder = 
+                document.getElementById('constraint-value').placeholder =
                     type === 'distance' ? 'Distance in grid units' :
                     type === 'angle' ? 'Angle in degrees' :
                     'Ratio (e.g., 2.5)';
@@ -2144,25 +2283,6 @@ H            Show this help
                 valueDiv.style.display = 'none';
             }
             
-            // Show description
-            const descriptions = {
-                coincident: 'Forces selected points or lines to share the same position.',
-                parallel: 'Maintains parallel relationship between selected lines.',
-                perpendicular: 'Forces lines to maintain 90° angle.',
-                distance: 'Sets a fixed distance between selected entities.',
-                angle: 'Sets a fixed angle between selected lines.',
-                ratio: 'Maintains proportional relationship between lengths.',
-                horizontal: 'Forces line(s) to be horizontal.',
-                vertical: 'Forces line(s) to be vertical.',
-                equal: 'Makes selected entities have equal dimensions.'
-            };
-            
-            if (descriptions[type]) {
-                descDiv.style.display = 'block';
-                descDiv.textContent = descriptions[type];
-            } else {
-                descDiv.style.display = 'none';
-            }
         });
         
         document.getElementById('cancel-constraint').addEventListener('click', () => {
@@ -2214,34 +2334,7 @@ H            Show this help
             const item = document.createElement('div');
             item.className = 'constraint-item';
             
-            let text = `${constraint.type}: `;
-            
-            // Handle new format with items array
-            if (constraint.items && constraint.items.length > 0) {
-                const itemDescriptions = constraint.items.map(item => {
-                    if (item.segmentId) {
-                        return item.segmentId;
-                    } else if (item.segmentIndex !== null && item.segmentIndex !== undefined) {
-                        return `${item.entityId}_seg_${item.segmentIndex}`;
-                    }
-                    return item.entityId;
-                });
-                text += itemDescriptions.join(', ');
-            } else if (constraint.entities) {
-                // Handle legacy format
-                text += constraint.entities.join(', ');
-                if (constraint.segmentId) {
-                    text += ` (${constraint.segmentId})`;
-                } else if (constraint.segment !== undefined) {
-                    text += ` (segment ${constraint.segment + 1})`;
-                }
-            }
-            
-            if (constraint.value !== undefined) {
-                const unit = constraint.type === 'angle' ? '°' : 
-                            constraint.type === 'ratio' ? 'x' : ' units';
-                text += ` = ${constraint.value}${unit}`;
-            }
+            let text = constraint.type;
             
             item.innerHTML = `
                 <span style="font-size: 11px;">${text}</span>
