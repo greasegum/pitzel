@@ -48,7 +48,8 @@
                     </svg>
                 </button>
                 <button class="tool-btn" id="clear-btn" title="Clear">Clear</button>
-                <button class="tool-btn" id="export-btn" title="Export">Export</button>
+                <button class="tool-btn" id="undo-btn" title="Undo">Undo</button>
+                <button class="tool-btn" id="redo-btn" title="Redo">Redo</button>
             </div>
             <canvas id="drawing-canvas"></canvas>
             <div class="status-bar">
@@ -61,6 +62,10 @@
                 <h3>JSON Representation</h3>
                 <button id="format-json">Format</button>
                 <button id="validate-json">Validate</button>
+                <button id="copy-json">Copy</button>
+                <button id="save-json">Save</button>
+                <button id="open-json">Open</button>
+                <input type="file" id="json-file-input" accept="application/json" style="display:none" />
             </div>
             <textarea id="json-editor" spellcheck="false"></textarea>
             <div class="metadata-panel">
