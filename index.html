@@ -50,17 +50,23 @@
                 <button class="tool-btn" id="clear-btn" title="Clear">Clear</button>
                 <button class="tool-btn" id="undo-btn" title="Undo">Undo</button>
                 <button class="tool-btn" id="redo-btn" title="Redo">Redo</button>
+                <div class="separator"></div>
+                <button class="tool-btn" id="export-canvas-btn" title="Export Canvas">Export PNG</button>
+                <button class="tool-btn" id="export-extents-btn" title="Export Extents">Export Area</button>
+                <button class="tool-btn" id="sync-api-btn" title="Sync with API">Sync API</button>
             </div>
             <canvas id="drawing-canvas"></canvas>
             <div class="status-bar">
                 <span id="coords">0, 0</span>
                 <span id="tool-status">Select</span>
+                <span id="api-status" style="margin-left: auto; color: #888;">API: Disconnected</span>
             </div>
         </div>
         <div class="panel right-panel">
             <div class="json-header">
                 <h3>JSON Representation</h3>
                 <button id="format-json">Format</button>
+                <button id="compact-json">Compact</button>
                 <button id="validate-json">Validate</button>
                 <button id="copy-json">Copy</button>
                 <button id="save-json">Save</button>
@@ -81,6 +87,8 @@
             </div>
         </div>
     </div>
+    <script src="api-client.js"></script>
     <script src="app.js"></script>
+    <script src="app-integration.js"></script>
 </body>
 </html>

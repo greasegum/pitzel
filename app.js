@@ -55,6 +55,7 @@ class ParametricDrawingApp {
         // Display options
         this.showDimensions = true;
         this.showGrid = true;
+        this.compactJSON = false;
         
         this.init();
     }
@@ -104,6 +105,10 @@ class ParametricDrawingApp {
         
         document.getElementById('format-json').addEventListener('click', () => {
             this.formatJSON();
+        });
+
+        document.getElementById('compact-json').addEventListener('click', () => {
+            this.toggleCompactJSON();
         });
 
         document.getElementById('validate-json').addEventListener('click', () => {
@@ -826,7 +831,7 @@ class ParametricDrawingApp {
                 this.showDimensions = !this.showDimensions;
                 this.render();
             }
-        } else if (e.key === 'h' || e.key === 'H') {
+        } else if (e.key === '?') {
             this.showShortcutsDialog();
         }
     }
@@ -869,7 +874,7 @@ Drawing:
 ESC          Cancel operation
 C            Close polyline (while drawing)
 
-H            Show this help
+?            Show this help
         `;
         alert(shortcuts);
     }
@@ -2014,17 +2019,29 @@ H            Show this help
             constraints: this.constraints
         };
         
-        this.jsonEditor.value = JSON.stringify(data, null, 2);
+        this.jsonEditor.value = this.compactJSON ? 
+            JSON.stringify(data) : 
+            JSON.stringify(data, null, 2);
         this.updateConstraintsList();
     }
     
     formatJSON() {
         try {
             const data = JSON.parse(this.jsonEditor.value);
+            this.compactJSON = false;
+            document.getElementById('compact-json').textContent = 'Compact';
             this.jsonEditor.value = JSON.stringify(data, null, 2);
         } catch (e) {
             alert('Invalid JSON format');
         }
+    }
+    
+    toggleCompactJSON() {
+        this.compactJSON = !this.compactJSON;
+        const btn = document.getElementById('compact-json');
+        btn.textContent = this.compactJSON ? 'Expand' : 'Compact';
+        btn.title = this.compactJSON ? 'Expand JSON formatting' : 'Compact JSON (remove whitespace)';
+        this.updateJSON();
     }
     
     validateJSON() {
