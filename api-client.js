@@ -1,6 +1,6 @@
 // API Client for Parametric Drawing Editor
 class DrawingAPIClient {
-    constructor(baseURL = 'http://localhost:3000') {
+    constructor(baseURL = 'https://pitzel.up.railway.app') {
         this.baseURL = baseURL;
     }
 

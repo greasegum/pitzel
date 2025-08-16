@@ -12,7 +12,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Check API connection
     async function checkAPIConnection() {
         try {
-            const response = await fetch('http://localhost:3000/api/editor/data');
+            const response = await fetch('https://pitzel.up.railway.app/api/editor/data');
             if (response.ok) {
                 apiStatusElement.textContent = 'API: Connected';
                 apiStatusElement.style.color = '#4CAF50';
@@ -45,7 +45,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         } catch (error) {
             console.error('Export failed:', error);
-            alert('Failed to export canvas. Make sure the server is running on port 3000.');
+            alert('Failed to export canvas. Make sure the API is accessible at https://pitzel.up.railway.app');
         }
     });
 
@@ -80,7 +80,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         } catch (error) {
             console.error('Export extents failed:', error);
-            alert('Failed to export canvas extents. Make sure the server is running.');
+            alert('Failed to export canvas extents. Make sure the API is accessible at https://pitzel.up.railway.app');
         }
     });
 
@@ -95,7 +95,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         } catch (error) {
             console.error('Sync failed:', error);
-            alert('Failed to sync with API. Make sure the server is running.');
+            alert('Failed to sync with API. Make sure the API is accessible at https://pitzel.up.railway.app');
         }
     });
 
