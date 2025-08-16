@@ -64,12 +64,21 @@ class ParametricDrawingApp {
         return `entity_${Math.random().toString(36).substr(2,4)}`;
     }
     
-    init() {
+    async init() {
         this.setupCanvas();
         this.setupEventListeners();
         this.render();
         this.updateJSON();
         this.displayShortcuts();
+        
+        // Load data from API on startup
+        if (window.drawingAPI) {
+            try {
+                await this.loadFromAPI();
+            } catch (error) {
+                console.log('Could not load from API on startup:', error);
+            }
+        }
     }
     
     setupCanvas() {

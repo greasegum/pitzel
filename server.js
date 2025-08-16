@@ -15,13 +15,41 @@ app.use(bodyParser.urlencoded({ extended: true, limit: '50mb' }));
 // Serve static files (HTML, CSS, JS)
 app.use(express.static('.'));
 
-// Store for JSON editor data (in production, use a database)
+// File-based persistence for JSON editor data
+const PERSISTENCE_FILE = 'persistent_data.json';
+
+// Load persistent data on startup
 let editorData = {
   entities: [],
   constraints: [],
   metadata: {},
   timestamp: new Date().toISOString()
 };
+
+// Load data from file if it exists
+async function loadPersistentData() {
+  try {
+    const data = await fs.readFile(PERSISTENCE_FILE, 'utf8');
+    editorData = JSON.parse(data);
+    console.log('Loaded persistent data from file');
+  } catch (error) {
+    console.log('No persistent data found, starting with empty canvas');
+  }
+}
+
+// Save data to file
+async function savePersistentData() {
+  try {
+    editorData.timestamp = new Date().toISOString();
+    await fs.writeFile(PERSISTENCE_FILE, JSON.stringify(editorData, null, 2));
+    console.log('Saved persistent data to file');
+  } catch (error) {
+    console.error('Failed to save persistent data:', error);
+  }
+}
+
+// Load data on startup
+loadPersistentData();
 
 // API Help endpoint - lists all available endpoints
 app.get('/api', (req, res) => {
@@ -227,7 +255,7 @@ app.get('/api/editor/data', (req, res) => {
 });
 
 // API endpoint to write/update JSON editor data
-app.post('/api/editor/data', (req, res) => {
+app.post('/api/editor/data', async (req, res) => {
   try {
     const { entities, constraints, metadata } = req.body;
     
@@ -238,6 +266,9 @@ app.post('/api/editor/data', (req, res) => {
       metadata: metadata || editorData.metadata,
       timestamp: new Date().toISOString()
     };
+    
+    // Save to persistent storage
+    await savePersistentData();
     
     res.json({
       success: true,
@@ -270,7 +301,7 @@ app.get('/api/chatbot/canvas-state', async (req, res) => {
 });
 
 // API endpoint for LLM chatbot integration - Update canvas
-app.post('/api/chatbot/update-canvas', (req, res) => {
+app.post('/api/chatbot/update-canvas', async (req, res) => {
   try {
     const { action, data } = req.body;
     
@@ -321,6 +352,9 @@ app.post('/api/chatbot/update-canvas', (req, res) => {
       default:
         return res.status(400).json({ error: 'Unknown action' });
     }
+    
+    // Save to persistent storage after any changes
+    await savePersistentData();
     
     res.json({
       success: true,
@@ -388,6 +422,7 @@ app.use('/saves', express.static(path.join(__dirname, 'saves')));
 // Start server
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
+  console.log(`📁 Persistent storage enabled: ${PERSISTENCE_FILE}`);
   console.log(`\nAPI Help: GET /api - Get detailed API documentation\n`);
   console.log(`API endpoints available:`);
   console.log(`  - GET  /api - API help and documentation`);

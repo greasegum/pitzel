@@ -99,6 +99,21 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    // Load from API
+    document.getElementById('load-api-btn').addEventListener('click', async () => {
+        try {
+            const result = await app.loadFromAPI();
+            
+            if (result && result.success) {
+                alert('Successfully loaded from API!');
+                checkAPIConnection();
+            }
+        } catch (error) {
+            console.error('Load failed:', error);
+            alert('Failed to load from API. Make sure the API is accessible at https://pitzel.up.railway.app');
+        }
+    });
+
     // Add keyboard shortcuts
     document.addEventListener('keydown', (e) => {
         // Ctrl/Cmd + E: Export canvas
