@@ -252,6 +252,9 @@ if (typeof ParametricDrawingApp !== 'undefined') {
 
     ParametricDrawingApp.prototype.syncWithAPI = async function() {
         try {
+            // Set flag to prevent polling conflicts
+            this.localChangePending = true;
+            
             // Get current drawing data
             const drawingData = {
                 entities: this.entities,
@@ -267,10 +270,23 @@ if (typeof ParametricDrawingApp !== 'undefined') {
                 drawingData.constraints,
                 metadata
             );
+            
+            // Update last API timestamp to prevent immediate polling update
+            if (result.success && result.data) {
+                this.lastApiTimestamp = result.data.timestamp;
+            }
+            
             console.log('Synced with API:', result);
+            
+            // Clear flag after a short delay
+            setTimeout(() => {
+                this.localChangePending = false;
+            }, 1000);
+            
             return result;
         } catch (error) {
             console.error('Failed to sync with API:', error);
+            this.localChangePending = false;
         }
     };
 

@@ -114,6 +114,19 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    // Toggle real-time updates
+    document.getElementById('toggle-realtime-btn').addEventListener('click', () => {
+        if (app.isPolling) {
+            app.stopApiPolling();
+            document.getElementById('toggle-realtime-btn').textContent = '⏹️ Off';
+            document.getElementById('toggle-realtime-btn').style.background = '#666';
+        } else {
+            app.startApiPolling();
+            document.getElementById('toggle-realtime-btn').textContent = '🔄 Live';
+            document.getElementById('toggle-realtime-btn').style.background = '#4CAF50';
+        }
+    });
+
     // Add keyboard shortcuts
     document.addEventListener('keydown', (e) => {
         // Ctrl/Cmd + E: Export canvas

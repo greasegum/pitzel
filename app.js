@@ -57,6 +57,13 @@ class ParametricDrawingApp {
         this.showGrid = true;
         this.compactJSON = false;
         
+        // Real-time API updates
+        this.apiPollingInterval = null;
+        this.lastApiTimestamp = null;
+        this.isPolling = false;
+        this.apiChangeHistory = []; // Track API changes for undo
+        this.localChangePending = false; // Prevent conflicts
+        
         this.init();
     }
 
@@ -75,6 +82,7 @@ class ParametricDrawingApp {
         if (window.drawingAPI) {
             try {
                 await this.loadFromAPI();
+                this.startApiPolling();
             } catch (error) {
                 console.log('Could not load from API on startup:', error);
             }
@@ -193,6 +201,9 @@ class ParametricDrawingApp {
         });
         
         this.setTool('select');
+        
+        // Initialize compact JSON button state
+        this.updateCompactButtonState();
     }
     
     handleWheel(e) {
@@ -780,6 +791,11 @@ class ParametricDrawingApp {
     }
     
     handleKeyDown(e) {
+        // Debug: Log key presses for troubleshooting
+        if (e.key === '?' || e.key === 'h' || e.key === 'H') {
+            console.log('Key pressed:', e.key, 'KeyCode:', e.keyCode, 'Prevented:', e.defaultPrevented);
+        }
+        
         // Track shift key for multi-selection
         this.isMultiSelecting = e.shiftKey;
         
@@ -841,7 +857,16 @@ class ParametricDrawingApp {
                 this.render();
             }
         } else if (e.key === '?') {
+            e.preventDefault();
+            console.log('? key pressed - showing help dialog');
             this.showShortcutsDialog();
+        } else if (e.key === 'h' || e.key === 'H') {
+            // Prevent browser default behavior for 'h' key
+            e.preventDefault();
+            console.log('H key prevented - should not show help');
+        } else if ((e.ctrlKey || e.metaKey) && e.key === 'z' && e.shiftKey) {
+            // Ctrl+Shift+Z or Cmd+Shift+Z for API undo
+            this.undoApiChange();
         }
     }
     
@@ -873,6 +898,7 @@ Ctrl+Y       Redo
 Ctrl+C       Copy entity
 Ctrl+V       Paste entity
 Ctrl+D       Duplicate entity
+Ctrl+Shift+Z Undo API changes
 
 View:
 D            Toggle dimensions
@@ -2028,9 +2054,17 @@ C            Close polyline (while drawing)
             constraints: this.constraints
         };
         
-        this.jsonEditor.value = this.compactJSON ? 
+        const jsonString = this.compactJSON ? 
             JSON.stringify(data) : 
             JSON.stringify(data, null, 2);
+        
+        this.jsonEditor.value = jsonString;
+        
+        // Debug logging
+        if (this.compactJSON) {
+            console.log('🔧 Compact JSON mode - Length:', jsonString.length, 'Line breaks:', (jsonString.match(/\n/g) || []).length);
+        }
+        
         this.updateConstraintsList();
     }
     
@@ -2038,18 +2072,24 @@ C            Close polyline (while drawing)
         try {
             const data = JSON.parse(this.jsonEditor.value);
             this.compactJSON = false;
-            document.getElementById('compact-json').textContent = 'Compact';
+            this.updateCompactButtonState();
             this.jsonEditor.value = JSON.stringify(data, null, 2);
         } catch (e) {
             alert('Invalid JSON format');
         }
     }
     
+    updateCompactButtonState() {
+        const btn = document.getElementById('compact-json');
+        if (btn) {
+            btn.textContent = this.compactJSON ? 'Expand' : 'Compact';
+            btn.title = this.compactJSON ? 'Expand JSON formatting' : 'Compact JSON (remove whitespace)';
+        }
+    }
+    
     toggleCompactJSON() {
         this.compactJSON = !this.compactJSON;
-        const btn = document.getElementById('compact-json');
-        btn.textContent = this.compactJSON ? 'Expand' : 'Compact';
-        btn.title = this.compactJSON ? 'Expand JSON formatting' : 'Compact JSON (remove whitespace)';
+        this.updateCompactButtonState();
         this.updateJSON();
     }
     
@@ -2324,6 +2364,172 @@ C            Close polyline (while drawing)
         this.render();
     }
     
+    // Real-time API polling
+    startApiPolling() {
+        if (this.isPolling) return;
+        
+        this.isPolling = true;
+        this.apiPollingInterval = setInterval(async () => {
+            await this.checkForApiChanges();
+        }, 2000); // Check every 2 seconds
+        
+        // Update status indicator
+        const statusElement = document.getElementById('realtime-status');
+        if (statusElement) {
+            statusElement.textContent = '🔄 Live';
+            statusElement.style.color = '#4CAF50';
+        }
+        
+        console.log('🔄 Started real-time API polling');
+    }
+    
+    stopApiPolling() {
+        if (this.apiPollingInterval) {
+            clearInterval(this.apiPollingInterval);
+            this.apiPollingInterval = null;
+        }
+        this.isPolling = false;
+        
+        // Update status indicator
+        const statusElement = document.getElementById('realtime-status');
+        if (statusElement) {
+            statusElement.textContent = '⏹️ Off';
+            statusElement.style.color = '#666';
+        }
+        
+        console.log('⏹️ Stopped real-time API polling');
+    }
+    
+    async checkForApiChanges() {
+        if (!window.drawingAPI || this.localChangePending) return;
+        
+        try {
+            const result = await window.drawingAPI.getEditorData();
+            if (result.success && result.data) {
+                const apiTimestamp = result.data.timestamp;
+                
+                // Check if there are new changes
+                if (this.lastApiTimestamp && apiTimestamp !== this.lastApiTimestamp) {
+                    console.log('🔄 API changes detected, updating...');
+                    await this.handleApiChanges(result.data);
+                }
+                
+                this.lastApiTimestamp = apiTimestamp;
+            }
+        } catch (error) {
+            console.log('API polling error:', error);
+        }
+    }
+    
+    async handleApiChanges(newData) {
+        // Save current state for undo
+        const previousState = {
+            entities: [...this.entities],
+            constraints: [...this.constraints],
+            timestamp: new Date().toISOString()
+        };
+        
+        // Update with new data
+        this.entities = newData.entities || [];
+        this.constraints = newData.constraints || [];
+        
+        // Add to API change history for undo
+        this.apiChangeHistory.push(previousState);
+        if (this.apiChangeHistory.length > this.maxUndoSteps) {
+            this.apiChangeHistory.shift();
+        }
+        
+        // Update display
+        this.render();
+        this.updateJSON();
+        
+        // Show notification
+        this.showApiChangeNotification();
+    }
+    
+    showApiChangeNotification() {
+        // Create or update notification
+        let notification = document.getElementById('api-change-notification');
+        if (!notification) {
+            notification = document.createElement('div');
+            notification.id = 'api-change-notification';
+            notification.style.cssText = `
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                background: #4CAF50;
+                color: white;
+                padding: 10px 15px;
+                border-radius: 5px;
+                z-index: 1000;
+                font-size: 14px;
+                box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+                animation: slideIn 0.3s ease-out;
+            `;
+            document.body.appendChild(notification);
+        }
+        
+        notification.textContent = '🔄 API changes detected - Press Ctrl+Z to undo';
+        notification.style.display = 'block';
+        
+        // Auto-hide after 3 seconds
+        setTimeout(() => {
+            notification.style.display = 'none';
+        }, 3000);
+    }
+    
+    // Undo API changes
+    undoApiChange() {
+        if (this.apiChangeHistory.length > 0) {
+            const previousState = this.apiChangeHistory.pop();
+            
+            // Restore previous state
+            this.entities = previousState.entities;
+            this.constraints = previousState.constraints;
+            
+            // Update display
+            this.render();
+            this.updateJSON();
+            
+            // Sync back to API
+            this.syncWithAPI();
+            
+            console.log('↩️ Undid API change');
+            
+            // Show notification
+            this.showUndoNotification();
+        }
+    }
+    
+    showUndoNotification() {
+        let notification = document.getElementById('undo-notification');
+        if (!notification) {
+            notification = document.createElement('div');
+            notification.id = 'undo-notification';
+            notification.style.cssText = `
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                background: #FF9800;
+                color: white;
+                padding: 10px 15px;
+                border-radius: 5px;
+                z-index: 1000;
+                font-size: 14px;
+                box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+                animation: slideIn 0.3s ease-out;
+            `;
+            document.body.appendChild(notification);
+        }
+        
+        notification.textContent = '↩️ API change undone';
+        notification.style.display = 'block';
+        
+        setTimeout(() => {
+            notification.style.display = 'none';
+        }, 2000);
+    }
+    
     removeConstraint(constraintId) {
         this.constraints = this.constraints.filter(c => c.id !== constraintId);
         this.updateJSON();
@@ -2374,6 +2580,10 @@ style.textContent = `
 @keyframes fadeOut {
     from { opacity: 1; }
     to { opacity: 0; }
+}
+@keyframes slideIn {
+    from { opacity: 0; transform: translateX(100px); }
+    to { opacity: 1; transform: translateX(0); }
 }
 `;
 document.head.appendChild(style);
