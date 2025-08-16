@@ -23,6 +23,123 @@ let editorData = {
   timestamp: new Date().toISOString()
 };
 
+// API Help endpoint - lists all available endpoints
+app.get('/api', (req, res) => {
+  res.json({
+    name: 'Parametric Drawing Editor API',
+    version: '1.0.0',
+    description: 'API for canvas export and JSON editor integration with LLM chatbots',
+    endpoints: {
+      help: {
+        method: 'GET',
+        path: '/api',
+        description: 'This help endpoint - lists all available API endpoints'
+      },
+      canvas: {
+        export: {
+          method: 'POST',
+          path: '/api/canvas/export',
+          description: 'Export full canvas as PNG',
+          body: {
+            imageData: 'base64 encoded PNG data',
+            bounds: '{ x, y, width, height }',
+            metadata: 'optional metadata object'
+          }
+        },
+        extents: {
+          method: 'POST',
+          path: '/api/canvas/extents',
+          description: 'Export specific canvas area as PNG',
+          body: {
+            imageData: 'base64 encoded PNG data',
+            x: 'number - left position',
+            y: 'number - top position',
+            width: 'number - area width',
+            height: 'number - area height',
+            metadata: 'optional metadata object'
+          }
+        }
+      },
+      editor: {
+        getData: {
+          method: 'GET',
+          path: '/api/editor/data',
+          description: 'Get current JSON editor data (entities, constraints, metadata)'
+        },
+        setData: {
+          method: 'POST',
+          path: '/api/editor/data',
+          description: 'Update JSON editor data',
+          body: {
+            entities: 'array of drawing entities',
+            constraints: 'array of constraints',
+            metadata: 'metadata object'
+          }
+        },
+        save: {
+          method: 'POST',
+          path: '/api/editor/save',
+          description: 'Save drawing to JSON file',
+          body: {
+            data: 'drawing data object',
+            filename: 'optional filename'
+          }
+        },
+        load: {
+          method: 'GET',
+          path: '/api/editor/load/:filename',
+          description: 'Load drawing from JSON file',
+          params: {
+            filename: 'name of the file to load'
+          }
+        }
+      },
+      chatbot: {
+        getState: {
+          method: 'GET',
+          path: '/api/chatbot/canvas-state',
+          description: 'Get current canvas state for chatbot integration'
+        },
+        updateCanvas: {
+          method: 'POST',
+          path: '/api/chatbot/update-canvas',
+          description: 'Update canvas via chatbot commands',
+          body: {
+            action: 'add_entity | remove_entity | update_entity | add_constraint | clear_canvas',
+            data: 'action-specific data object'
+          },
+          examples: {
+            add_entity: {
+              action: 'add_entity',
+              data: {
+                entity: '{ id, type, ...properties }'
+              }
+            },
+            remove_entity: {
+              action: 'remove_entity',
+              data: {
+                entityId: 'entity_id_to_remove'
+              }
+            },
+            update_entity: {
+              action: 'update_entity',
+              data: {
+                entityId: 'entity_id_to_update',
+                updates: '{ ...properties_to_update }'
+              }
+            }
+          }
+        }
+      }
+    },
+    entityTypes: ['line', 'polyline', 'rectangle', 'circle', 'arc'],
+    staticRoutes: {
+      exports: '/exports/:filename - Access exported PNG files',
+      saves: '/saves/:filename - Access saved JSON files'
+    }
+  });
+});
+
 // API endpoint to export canvas as PNG
 app.post('/api/canvas/export', async (req, res) => {
   try {
@@ -271,7 +388,9 @@ app.use('/saves', express.static(path.join(__dirname, 'saves')));
 // Start server
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
+  console.log(`\nAPI Help: GET /api - Get detailed API documentation\n`);
   console.log(`API endpoints available:`);
+  console.log(`  - GET  /api - API help and documentation`);
   console.log(`  - POST /api/canvas/export - Export full canvas as PNG`);
   console.log(`  - POST /api/canvas/extents - Export canvas extents as PNG`);
   console.log(`  - GET  /api/editor/data - Read JSON editor data`);
