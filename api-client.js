@@ -231,62 +231,34 @@ if (typeof ParametricDrawingApp !== 'undefined') {
     ParametricDrawingApp.prototype.exportCanvasToAPI = async function(metadata = {}) {
         try {
             const result = await window.drawingAPI.exportCanvas(this.canvas, metadata);
-            console.log('Canvas exported:', result);
             return result;
         } catch (error) {
             console.error('Failed to export canvas:', error);
-            alert('Failed to export canvas. Make sure the server is running.');
+            alert('Failed to export canvas. Make sure the Railway API is accessible at https://pitzel.up.railway.app');
         }
     };
 
     ParametricDrawingApp.prototype.exportCanvasExtentsToAPI = async function(x, y, width, height, metadata = {}) {
         try {
             const result = await window.drawingAPI.exportCanvasExtents(this.canvas, x, y, width, height, metadata);
-            console.log('Canvas extents exported:', result);
             return result;
         } catch (error) {
             console.error('Failed to export canvas extents:', error);
-            alert('Failed to export canvas extents. Make sure the server is running.');
+            alert('Failed to export canvas extents. Make sure the Railway API is accessible at https://pitzel.up.railway.app');
         }
     };
 
     ParametricDrawingApp.prototype.syncWithAPI = async function() {
         try {
-            // Set flag to prevent polling conflicts
-            this.localChangePending = true;
-            
-            // Get current drawing data
-            const drawingData = {
-                entities: this.entities,
-                constraints: this.constraints
-            };
-            
-            // Get metadata from selected entity if any
-            const metadata = this.selectedEntity ? 
-                this.entities.find(e => e.id === this.selectedEntity)?.metadata || {} : {};
-            
             const result = await window.drawingAPI.updateEditorData(
-                drawingData.entities,
-                drawingData.constraints,
-                metadata
+                this.entities,
+                this.constraints,
+                { timestamp: new Date().toISOString() }
             );
-            
-            // Update last API timestamp to prevent immediate polling update
-            if (result.success && result.data) {
-                this.lastApiTimestamp = result.data.timestamp;
-            }
-            
-            console.log('Synced with API:', result);
-            
-            // Clear flag after a short delay
-            setTimeout(() => {
-                this.localChangePending = false;
-            }, 1000);
             
             return result;
         } catch (error) {
             console.error('Failed to sync with API:', error);
-            this.localChangePending = false;
         }
     };
 
@@ -298,7 +270,6 @@ if (typeof ParametricDrawingApp !== 'undefined') {
                 this.constraints = result.data.constraints || [];
                 this.render();
                 this.updateJSON();
-                console.log('Loaded from API:', result);
             }
             return result;
         } catch (error) {
@@ -306,16 +277,5 @@ if (typeof ParametricDrawingApp !== 'undefined') {
         }
     };
 
-    // Auto-sync on changes
-    const originalUpdateJSON = ParametricDrawingApp.prototype.updateJSON;
-    ParametricDrawingApp.prototype.updateJSON = function() {
-        originalUpdateJSON.call(this);
-        // Debounced sync to API
-        if (this.syncTimeout) {
-            clearTimeout(this.syncTimeout);
-        }
-        this.syncTimeout = setTimeout(() => {
-            this.syncWithAPI();
-        }, 1000);
-    };
+
 }

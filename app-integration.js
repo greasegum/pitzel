@@ -6,30 +6,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
     }
 
-    // API status indicator
-    const apiStatusElement = document.getElementById('api-status');
-    
-    // Check API connection
-    async function checkAPIConnection() {
-        try {
-            const response = await fetch('https://pitzel.up.railway.app/api/editor/data');
-            if (response.ok) {
-                apiStatusElement.textContent = 'API: Connected';
-                apiStatusElement.style.color = '#4CAF50';
-                return true;
-            }
-        } catch (error) {
-            apiStatusElement.textContent = 'API: Disconnected';
-            apiStatusElement.style.color = '#888';
-            return false;
-        }
-    }
-
-    // Check connection on load and periodically
-    checkAPIConnection();
-    setInterval(checkAPIConnection, 5000);
-
-    // Export full canvas as PNG
+    // Export canvas as PNG
     document.getElementById('export-canvas-btn').addEventListener('click', async () => {
         try {
             const metadata = {
@@ -45,106 +22,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         } catch (error) {
             console.error('Export failed:', error);
-            alert('Failed to export canvas. Make sure the API is accessible at https://pitzel.up.railway.app');
-        }
-    });
-
-    // Export selected area as PNG
-    document.getElementById('export-extents-btn').addEventListener('click', async () => {
-        try {
-            // Calculate bounds of all entities
-            const bounds = window.drawingAPI.calculateDrawingBounds(app.entities);
-            
-            if (bounds.width === 0 || bounds.height === 0) {
-                alert('No entities to export. Please draw something first.');
-                return;
-            }
-
-            // Add padding
-            const padding = 20;
-            const x = Math.max(0, bounds.minX - padding);
-            const y = Math.max(0, bounds.minY - padding);
-            const width = bounds.width + (padding * 2);
-            const height = bounds.height + (padding * 2);
-            
-            const metadata = {
-                entities: app.entities,
-                bounds: bounds,
-                timestamp: new Date().toISOString()
-            };
-            
-            const result = await app.exportCanvasExtentsToAPI(x, y, width, height, metadata);
-            
-            if (result && result.success) {
-                alert(`Canvas extents exported successfully!\nFile: ${result.filename}\nExtents: ${x},${y} ${width}x${height}`);
-            }
-        } catch (error) {
-            console.error('Export extents failed:', error);
-            alert('Failed to export canvas extents. Make sure the API is accessible at https://pitzel.up.railway.app');
-        }
-    });
-
-    // Sync with API
-    document.getElementById('sync-api-btn').addEventListener('click', async () => {
-        try {
-            const result = await app.syncWithAPI();
-            
-            if (result && result.success) {
-                alert('Successfully synced with API!');
-                checkAPIConnection();
-            }
-        } catch (error) {
-            console.error('Sync failed:', error);
-            alert('Failed to sync with API. Make sure the API is accessible at https://pitzel.up.railway.app');
-        }
-    });
-
-    // Load from API
-    document.getElementById('load-api-btn').addEventListener('click', async () => {
-        try {
-            const result = await app.loadFromAPI();
-            
-            if (result && result.success) {
-                alert('Successfully loaded from API!');
-                checkAPIConnection();
-            }
-        } catch (error) {
-            console.error('Load failed:', error);
-            alert('Failed to load from API. Make sure the API is accessible at https://pitzel.up.railway.app');
-        }
-    });
-
-    // Toggle real-time updates
-    document.getElementById('toggle-realtime-btn').addEventListener('click', () => {
-        if (app.isPolling) {
-            app.stopApiPolling();
-            document.getElementById('toggle-realtime-btn').textContent = '⏹️ Off';
-            document.getElementById('toggle-realtime-btn').style.background = '#666';
-        } else {
-            app.startApiPolling();
-            document.getElementById('toggle-realtime-btn').textContent = '🔄 Live';
-            document.getElementById('toggle-realtime-btn').style.background = '#4CAF50';
-        }
-    });
-
-    // Add keyboard shortcuts
-    document.addEventListener('keydown', (e) => {
-        // Ctrl/Cmd + E: Export canvas
-        if ((e.ctrlKey || e.metaKey) && e.key === 'e') {
-            e.preventDefault();
-            document.getElementById('export-canvas-btn').click();
-        }
-        
-        // Ctrl/Cmd + Shift + E: Export extents
-        if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'E') {
-            e.preventDefault();
-            document.getElementById('export-extents-btn').click();
-        }
-        
-        // Ctrl/Cmd + Shift + S: Sync with API
-        if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'S') {
-            e.preventDefault();
-            document.getElementById('sync-api-btn').click();
+            alert('Failed to export canvas. Make sure the Railway API is accessible at https://pitzel.up.railway.app');
         }
     });
 
@@ -233,6 +111,4 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
     };
-
-    console.log('API integration loaded. Chatbot API available at window.chatbotAPI');
 });
