@@ -52,6 +52,15 @@
                 <button class="tool-btn" id="redo-btn" title="Redo">Redo</button>
                 <div class="separator"></div>
                 <button class="tool-btn" id="export-canvas-btn" title="Export Canvas">Export PNG</button>
+                <div class="separator"></div>
+                <button class="tool-btn" id="layout-toggle-btn" title="Toggle Layout">
+                    <svg width="20" height="20" viewBox="0 0 20 20">
+                        <rect x="3" y="3" width="6" height="6" stroke="currentColor" stroke-width="1" fill="none"/>
+                        <rect x="11" y="3" width="6" height="6" stroke="currentColor" stroke-width="1" fill="none"/>
+                        <rect x="3" y="11" width="6" height="6" stroke="currentColor" stroke-width="1" fill="none"/>
+                        <rect x="11" y="11" width="6" height="6" stroke="currentColor" stroke-width="1" fill="none"/>
+                    </svg>
+                </button>
             </div>
             <canvas id="drawing-canvas"></canvas>
             <div class="status-bar">
@@ -85,8 +94,9 @@
             </div>
         </div>
     </div>
+    <!-- Load Central State Manager first -->
+    <script src="state-manager.js"></script>
     <script src="api-client.js"></script>
     <script src="app.js"></script>
-    <script src="app-integration.js"></script>
 </body>
 </html>

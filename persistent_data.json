@@ -1,23 +1,47 @@
 {
+  "version": "1.0",
+  "units": "grid",
+  "gridSize": 20,
+  "origin": [
+    0,
+    0
+  ],
   "entities": [
     {
-      "id": "test_persistence_entity",
+      "id": "DRAG_TEST",
       "type": "rectangle",
-      "x": 100,
-      "y": 100,
-      "width": 200,
-      "height": 150,
-      "color": "#00ff88",
+      "topLeft": [
+        100,
+        100
+      ],
+      "bottomRight": [
+        200,
+        200
+      ],
+      "color": "#00ff00",
       "metadata": {
         "test": true,
-        "created": "2025-08-16T21:15:20.722Z"
+        "description": "GREEN RECTANGLE FOR DRAG TESTING"
+      }
+    },
+    {
+      "id": "CIRCLE_TEST",
+      "type": "circle",
+      "center": [
+        300,
+        150
+      ],
+      "radius": 50,
+      "color": "#ff00ff",
+      "metadata": {
+        "test": true,
+        "description": "MAGENTA CIRCLE FOR DRAG TESTING"
       }
     }
   ],
   "constraints": [],
   "metadata": {
-    "test": true,
-    "description": "Persistence test data"
+    "timestamp": "2025-08-17T01:40:02.112Z"
   },
-  "timestamp": "2025-08-16T21:15:20.722Z"
+  "timestamp": "2025-08-17T02:19:07.741Z"
 }

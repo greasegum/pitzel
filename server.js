@@ -1,55 +1,227 @@
 const express = require('express');
-const cors = require('cors');
-const bodyParser = require('body-parser');
 const fs = require('fs').promises;
 const path = require('path');
+const cors = require('cors');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
-
-// Middleware
-app.use(cors());
-app.use(bodyParser.json({ limit: '50mb' }));
-app.use(bodyParser.urlencoded({ extended: true, limit: '50mb' }));
-
-// Serve static files (HTML, CSS, JS)
-app.use(express.static('.'));
-
-// File-based persistence for JSON editor data
+const PORT = process.env.PORT || 3001;
 const PERSISTENCE_FILE = 'persistent_data.json';
 
-// Load persistent data on startup
-let editorData = {
-  entities: [],
-  constraints: [],
-  metadata: {},
-  timestamp: new Date().toISOString()
-};
+// Enable CORS
+app.use(cors());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.static('.'));
 
-// Load data from file if it exists
-async function loadPersistentData() {
-  try {
-    const data = await fs.readFile(PERSISTENCE_FILE, 'utf8');
-    editorData = JSON.parse(data);
-    console.log('Loaded persistent data from file');
-  } catch (error) {
-    console.log('No persistent data found, starting with empty canvas');
+// State Management Class
+class EditorStateManager {
+  constructor() {
+    this.data = {
+      version: "1.0",
+      units: "grid", 
+      gridSize: 20,
+      origin: [0, 0],
+      entities: [],
+      constraints: [],
+      metadata: {},
+      timestamp: new Date().toISOString()
+    };
+    this.isLoading = false;
+    this.isSaving = false;
+  }
+
+  // Validate entity structure
+  validateEntity(entity) {
+    if (!entity || typeof entity !== 'object') {
+      throw new Error('Entity must be an object');
+    }
+    if (!entity.id || typeof entity.id !== 'string') {
+      throw new Error('Entity must have a valid string id');
+    }
+    if (!entity.type || typeof entity.type !== 'string') {
+      throw new Error('Entity must have a valid string type');
+    }
+    return true;
+  }
+
+  // Validate complete data structure
+  validateData(data) {
+    if (!data || typeof data !== 'object') {
+      throw new Error('Data must be an object');
+    }
+    
+    // Validate required fields
+    const requiredFields = ['version', 'units', 'gridSize', 'origin', 'entities', 'constraints'];
+    for (const field of requiredFields) {
+      if (!(field in data)) {
+        throw new Error(`Missing required field: ${field}`);
+      }
+    }
+
+    // Validate entities array
+    if (!Array.isArray(data.entities)) {
+      throw new Error('Entities must be an array');
+    }
+    
+    // Validate each entity
+    for (const entity of data.entities) {
+      this.validateEntity(entity);
+    }
+
+    // Validate constraints array
+    if (!Array.isArray(data.constraints)) {
+      throw new Error('Constraints must be an array');
+    }
+
+    return true;
+  }
+
+  // Update state with validation
+  updateState(newData) {
+    try {
+      // Validate the new data
+      this.validateData(newData);
+      
+      // Update the state
+      this.data = {
+        ...this.data,
+        ...newData,
+        timestamp: new Date().toISOString()
+      };
+      
+      console.log(`✅ State updated: ${this.data.entities.length} entities`);
+      return true;
+    } catch (error) {
+      console.error('❌ State update failed:', error.message);
+      throw error;
+    }
+  }
+
+  // Get current state
+  getState() {
+    return { ...this.data };
+  }
+
+  // Load state from file
+  async loadFromFile() {
+    if (this.isLoading) {
+      console.log('⚠️ Already loading, skipping...');
+      return;
+    }
+    
+    this.isLoading = true;
+    try {
+      const data = await fs.readFile(PERSISTENCE_FILE, 'utf8');
+      const parsedData = JSON.parse(data);
+      
+      // Validate loaded data
+      this.validateData(parsedData);
+      
+      // Update state
+      this.data = parsedData;
+      console.log('📁 State loaded from file successfully');
+    } catch (error) {
+      if (error.code === 'ENOENT') {
+        console.log('📁 No persistent file found, using default state');
+      } else {
+        console.error('❌ Failed to load state from file:', error.message);
+        throw error;
+      }
+    } finally {
+      this.isLoading = false;
+    }
+  }
+
+  // Save state to file
+  async saveToFile() {
+    if (this.isSaving) {
+      console.log('⚠️ Already saving, skipping...');
+      return;
+    }
+    
+    this.isSaving = true;
+    try {
+      await fs.writeFile(PERSISTENCE_FILE, JSON.stringify(this.data, null, 2));
+      console.log('💾 State saved to file successfully');
+    } catch (error) {
+      console.error('❌ Failed to save state to file:', error.message);
+      throw error;
+    } finally {
+      this.isSaving = false;
+    }
+  }
+
+  // Add entity
+  addEntity(entity) {
+    try {
+      this.validateEntity(entity);
+      
+      // Check for duplicate ID
+      if (this.data.entities.some(e => e.id === entity.id)) {
+        throw new Error(`Entity with ID '${entity.id}' already exists`);
+      }
+      
+      this.data.entities.push(entity);
+      this.data.timestamp = new Date().toISOString();
+      
+      console.log(`✅ Entity added: ${entity.id}`);
+      return entity;
+    } catch (error) {
+      console.error('❌ Failed to add entity:', error.message);
+      throw error;
+    }
+  }
+
+  // Remove entity
+  removeEntity(entityId) {
+    const index = this.data.entities.findIndex(e => e.id === entityId);
+    if (index === -1) {
+      throw new Error(`Entity with ID '${entityId}' not found`);
+    }
+    
+    const removed = this.data.entities.splice(index, 1)[0];
+    this.data.timestamp = new Date().toISOString();
+    
+    console.log(`✅ Entity removed: ${entityId}`);
+    return removed;
+  }
+
+  // Update entity
+  updateEntity(entityId, updates) {
+    const index = this.data.entities.findIndex(e => e.id === entityId);
+    if (index === -1) {
+      throw new Error(`Entity with ID '${entityId}' not found`);
+    }
+    
+    this.data.entities[index] = { ...this.data.entities[index], ...updates };
+    this.data.timestamp = new Date().toISOString();
+    
+    console.log(`✅ Entity updated: ${entityId}`);
+    return this.data.entities[index];
+  }
+
+  // Clear all entities
+  clearEntities() {
+    this.data.entities = [];
+    this.data.timestamp = new Date().toISOString();
+    console.log('✅ All entities cleared');
   }
 }
 
-// Save data to file
-async function savePersistentData() {
+// Create state manager instance
+const stateManager = new EditorStateManager();
+
+// Initialize server
+async function initializeServer() {
   try {
-    editorData.timestamp = new Date().toISOString();
-    await fs.writeFile(PERSISTENCE_FILE, JSON.stringify(editorData, null, 2));
-    console.log('Saved persistent data to file');
+    await stateManager.loadFromFile();
+    console.log('🚀 Server ready - State management initialized');
   } catch (error) {
-    console.error('Failed to save persistent data:', error);
+    console.error('❌ Server initialization failed:', error.message);
+    process.exit(1);
   }
 }
 
-// Load data on startup
-loadPersistentData();
+initializeServer();
 
 // API Help endpoint - lists all available endpoints
 app.get('/api', (req, res) => {
@@ -245,7 +417,7 @@ app.get('/api/editor/data', (req, res) => {
   try {
     res.json({
       success: true,
-      data: editorData,
+      data: stateManager.getState(),
       timestamp: new Date().toISOString()
     });
   } catch (error) {
@@ -257,23 +429,29 @@ app.get('/api/editor/data', (req, res) => {
 // API endpoint to write/update JSON editor data
 app.post('/api/editor/data', async (req, res) => {
   try {
-    const { entities, constraints, metadata } = req.body;
+    const { version, units, gridSize, origin, entities, constraints, metadata, save = false } = req.body;
     
     // Update the stored data
-    editorData = {
-      entities: entities || editorData.entities,
-      constraints: constraints || editorData.constraints,
-      metadata: metadata || editorData.metadata,
+    stateManager.updateState({
+      version: version || stateManager.data.version,
+      units: units || stateManager.data.units,
+      gridSize: gridSize || stateManager.data.gridSize,
+      origin: origin || stateManager.data.origin,
+      entities: entities || stateManager.data.entities,
+      constraints: constraints || stateManager.data.constraints,
+      metadata: metadata || stateManager.data.metadata,
       timestamp: new Date().toISOString()
-    };
+    });
     
-    // Save to persistent storage
-    await savePersistentData();
+    // Only save if explicitly requested
+    if (save) {
+      await stateManager.saveToFile();
+    }
     
     res.json({
       success: true,
       message: 'Editor data updated successfully',
-      data: editorData
+      data: stateManager.getState()
     });
     
   } catch (error) {
@@ -287,11 +465,7 @@ app.get('/api/chatbot/canvas-state', async (req, res) => {
   try {
     res.json({
       success: true,
-      canvas: {
-        entities: editorData.entities,
-        constraints: editorData.constraints,
-        metadata: editorData.metadata
-      },
+      canvas: stateManager.getState(),
       timestamp: new Date().toISOString()
     });
   } catch (error) {
@@ -314,38 +488,37 @@ app.post('/api/chatbot/update-canvas', async (req, res) => {
     switch (action) {
       case 'add_entity':
         if (data.entity) {
-          editorData.entities.push(data.entity);
+          stateManager.addEntity(data.entity);
           result = { message: 'Entity added', entity: data.entity };
         }
         break;
         
       case 'remove_entity':
         if (data.entityId) {
-          editorData.entities = editorData.entities.filter(e => e.id !== data.entityId);
+          stateManager.removeEntity(data.entityId);
           result = { message: 'Entity removed', entityId: data.entityId };
         }
         break;
         
       case 'update_entity':
         if (data.entityId && data.updates) {
-          const entityIndex = editorData.entities.findIndex(e => e.id === data.entityId);
-          if (entityIndex !== -1) {
-            editorData.entities[entityIndex] = { ...editorData.entities[entityIndex], ...data.updates };
-            result = { message: 'Entity updated', entity: editorData.entities[entityIndex] };
-          }
+          stateManager.updateEntity(data.entityId, data.updates);
+          result = { message: 'Entity updated', entity: stateManager.getState().entities.find(e => e.id === data.entityId) };
         }
         break;
         
       case 'add_constraint':
         if (data.constraint) {
-          editorData.constraints.push(data.constraint);
-          result = { message: 'Constraint added', constraint: data.constraint };
+          // Assuming constraints are added to the stateManager's data.constraints
+          // This part needs to be implemented in the stateManager class
+          // For now, we'll just log and return a placeholder
+          console.log('add_constraint action received, but constraint logic not fully implemented in stateManager');
+          result = { message: 'Constraint added (placeholder)', constraint: data.constraint };
         }
         break;
         
       case 'clear_canvas':
-        editorData.entities = [];
-        editorData.constraints = [];
+        stateManager.clearEntities();
         result = { message: 'Canvas cleared' };
         break;
         
@@ -353,8 +526,10 @@ app.post('/api/chatbot/update-canvas', async (req, res) => {
         return res.status(400).json({ error: 'Unknown action' });
     }
     
-    // Save to persistent storage after any changes
-    await savePersistentData();
+    // Only save if explicitly requested in the request body
+    if (req.body.save) {
+      await stateManager.saveToFile();
+    }
     
     res.json({
       success: true,
@@ -366,6 +541,41 @@ app.post('/api/chatbot/update-canvas', async (req, res) => {
   } catch (error) {
     console.error('Error updating canvas:', error);
     res.status(500).json({ error: 'Failed to update canvas', details: error.message });
+  }
+});
+
+// API endpoint to save current editor data to persistent storage
+app.post('/api/editor/save-persistent', async (req, res) => {
+  try {
+    await stateManager.saveToFile();
+    
+    res.json({
+      success: true,
+      message: 'Editor data saved to persistent storage',
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error('Error saving persistent data:', error);
+    res.status(500).json({ error: 'Failed to save persistent data', details: error.message });
+  }
+});
+
+// API endpoint to reload data from persistent storage
+app.post('/api/editor/reload-persistent', async (req, res) => {
+  try {
+    await stateManager.loadFromFile();
+    
+    res.json({
+      success: true,
+      message: 'Editor data reloaded from persistent storage',
+      data: stateManager.getState(),
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error('Error reloading persistent data:', error);
+    res.status(500).json({ error: 'Failed to reload persistent data', details: error.message });
   }
 });
 

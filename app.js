@@ -48,6 +48,14 @@ class ParametricDrawingApp {
         this.panOffset = { x: 0, y: 0 };
         this.isPanning = false;
         this.panStart = null;
+        this.panStartOffset = null;
+        
+        // Smooth panning
+        this.panVelocity = { x: 0, y: 0 };
+        this.lastPanTime = 0;
+        this.panAnimationId = null;
+        this.isPanningWithMouse = false;
+        this.panButton = null; // 'middle', 'right', or 'space'
         
         // Clipboard
         this.clipboard = null;
@@ -57,41 +65,60 @@ class ParametricDrawingApp {
         this.showGrid = true;
         this.compactJSON = false;
         
-        // Simple real-time sync
-        this.syncInterval = null;
-        this.lastSyncTimestamp = null;
+        // Central state manager integration
+        this.stateManager = null;
+        this.unsubscribe = null;
         
         this.init();
     }
 
     generateId() {
+        if (this.stateManager) {
+            return this.stateManager.generateEntityId();
+        }
         return `entity_${Math.random().toString(36).substr(2,4)}`;
     }
     
     async init() {
         this.setupCanvas();
         this.setupEventListeners();
+        this.setupResponsiveLayout();
+        this.setupStateManager();
         this.render();
         this.updateJSON();
         this.displayShortcuts();
         
-        // Load initial data from API
-        await this.loadFromAPI();
-        
-        // Start real-time sync
-        this.startRealtimeSync();
+        // Initialize central state manager
+        await this.initializeStateManager();
     }
     
     setupCanvas() {
         const resizeCanvas = () => {
             const rect = this.canvas.parentElement.getBoundingClientRect();
+            const toolbarHeight = this.canvas.parentElement.querySelector('.toolbar').offsetHeight;
+            const statusBarHeight = this.canvas.parentElement.querySelector('.status-bar').offsetHeight;
+            const availableHeight = rect.height - toolbarHeight - statusBarHeight;
+            
             this.canvas.width = rect.width;
-            this.canvas.height = rect.height - 80;
+            this.canvas.height = Math.max(availableHeight, 200); // Minimum height of 200px
             this.render();
         };
         
         resizeCanvas();
-        window.addEventListener('resize', resizeCanvas);
+        
+        // Debounced resize handler for better performance
+        let resizeTimeout;
+        const debouncedResize = () => {
+            clearTimeout(resizeTimeout);
+            resizeTimeout = setTimeout(resizeCanvas, 100);
+        };
+        
+        window.addEventListener('resize', debouncedResize);
+        
+        // Also handle orientation changes on mobile
+        window.addEventListener('orientationchange', () => {
+            setTimeout(resizeCanvas, 500); // Delay to allow orientation change to complete
+        });
     }
     
     setupEventListeners() {
@@ -108,9 +135,9 @@ class ParametricDrawingApp {
             });
         });
         
-        document.getElementById('clear-btn').addEventListener('click', () => {
+        document.getElementById('clear-btn').addEventListener('click', async () => {
             this.saveState();
-            this.clearDrawing();
+            await this.clearDrawing();
         });
         
         document.getElementById('format-json').addEventListener('click', () => {
@@ -169,6 +196,11 @@ class ParametricDrawingApp {
         document.getElementById('origin-btn').addEventListener('click', () => {
             this.settingOrigin = true;
             document.getElementById('tool-status').textContent = 'Setting Origin';
+        });
+        
+        // Layout toggle functionality
+        document.getElementById('layout-toggle-btn').addEventListener('click', () => {
+            this.toggleLayout();
         });
         
         document.getElementById('add-metadata-field').addEventListener('click', () => {
@@ -235,19 +267,36 @@ class ParametricDrawingApp {
     
     async loadFromAPI() {
         try {
-            if (!window.drawingAPI) return;
+            console.log('�� Attempting to load from API...');
             
+            if (!window.drawingAPI) {
+                console.log('❌ window.drawingAPI not available');
+                this.updateSyncStatus(false);
+                return;
+            }
+            
+            console.log('✅ window.drawingAPI available, calling getEditorData...');
             const result = await window.drawingAPI.getEditorData();
+            
+            console.log('📡 API response:', result);
+            
             if (result.success && result.data) {
+                console.log('✅ API call successful, updating app data...');
                 this.entities = result.data.entities || [];
                 this.constraints = result.data.constraints || [];
+                console.log(`📊 Loaded ${this.entities.length} entities and ${this.constraints.length} constraints`);
+                
                 this.render();
                 this.updateJSON();
                 this.lastSyncTimestamp = result.data.timestamp;
                 this.updateSyncStatus(true);
+                console.log('✅ Data loaded and app updated successfully');
+            } else {
+                console.log('❌ API call failed:', result);
+                this.updateSyncStatus(false);
             }
         } catch (error) {
-            console.log('Load failed:', error);
+            console.log('❌ Load failed:', error);
             this.updateSyncStatus(false);
         }
     }
@@ -257,6 +306,114 @@ class ParametricDrawingApp {
         if (statusElement) {
             statusElement.textContent = connected ? 'API: Connected' : 'API: Disconnected';
             statusElement.style.color = connected ? '#4CAF50' : '#888';
+        }
+    }
+    
+    toggleLayout() {
+        const container = document.querySelector('.container');
+        const isVertical = container.classList.contains('vertical-layout');
+        
+        if (isVertical) {
+            container.classList.remove('vertical-layout');
+            document.getElementById('layout-toggle-btn').title = 'Switch to Vertical Layout';
+        } else {
+            container.classList.add('vertical-layout');
+            document.getElementById('layout-toggle-btn').title = 'Switch to Horizontal Layout';
+        }
+        
+        // Trigger canvas resize after layout change
+        setTimeout(() => {
+            this.setupCanvas();
+        }, 100);
+    }
+    
+    setupResponsiveLayout() {
+        const container = document.querySelector('.container');
+        const isMobile = window.innerWidth <= 768;
+        const isLandscape = window.innerHeight <= 600 && window.innerWidth > window.innerHeight;
+        
+        // Auto-switch to vertical layout on mobile
+        if (isMobile && !isLandscape) {
+            container.classList.add('vertical-layout');
+            document.getElementById('layout-toggle-btn').title = 'Switch to Horizontal Layout';
+        } else {
+            container.classList.remove('vertical-layout');
+            document.getElementById('layout-toggle-btn').title = 'Switch to Vertical Layout';
+        }
+        
+        // Update layout on window resize
+        const updateLayout = () => {
+            const newIsMobile = window.innerWidth <= 768;
+            const newIsLandscape = window.innerHeight <= 600 && window.innerWidth > window.innerHeight;
+            
+            if (newIsMobile && !newIsLandscape) {
+                container.classList.add('vertical-layout');
+                document.getElementById('layout-toggle-btn').title = 'Switch to Horizontal Layout';
+            } else if (!newIsMobile) {
+                container.classList.remove('vertical-layout');
+                document.getElementById('layout-toggle-btn').title = 'Switch to Vertical Layout';
+            }
+        };
+        
+        window.addEventListener('resize', updateLayout);
+        window.addEventListener('orientationchange', () => {
+            setTimeout(updateLayout, 500);
+        });
+    }
+    
+    // Central State Manager Integration
+    setupStateManager() {
+        // Check if central state manager is available
+        if (window.centralStateManager) {
+            this.stateManager = window.centralStateManager;
+            console.log('✅ Central State Manager connected');
+        } else {
+            console.warn('⚠️ Central State Manager not available, using local state');
+        }
+    }
+    
+    async initializeStateManager() {
+        if (this.stateManager) {
+            try {
+                // Subscribe to state changes
+                this.unsubscribe = this.stateManager.subscribe((newState) => {
+                    console.log('🔄 State changed, updating UI...');
+                    this.updateFromState(newState);
+                });
+                
+                // Load initial state
+                await this.stateManager.loadFromAPI();
+                console.log('✅ State manager initialized');
+            } catch (error) {
+                console.error('❌ Failed to initialize state manager:', error);
+                // Fall back to local state
+                this.stateManager = null;
+            }
+        } else {
+            // Fall back to original API loading
+            await this.loadFromAPI();
+        }
+    }
+    
+    updateFromState(state) {
+        // Update local state from central state manager
+        this.entities = state.entities || [];
+        this.constraints = state.constraints || [];
+        this.origin = { x: state.origin?.[0] || 0, y: state.origin?.[1] || 0 };
+        
+        // Update UI
+        this.updateJSON();
+        this.render();
+        this.updateEntityCount();
+        
+        console.log(`📊 UI updated: ${this.entities.length} entities`);
+    }
+    
+    updateEntityCount() {
+        const count = this.entities.length;
+        const statusElement = document.getElementById('api-status');
+        if (statusElement) {
+            statusElement.textContent = `Entities: ${count}`;
         }
     }
     
@@ -621,18 +778,24 @@ class ParametricDrawingApp {
     }
     
     handleMouseDown(e) {
+        e.preventDefault();
+        
         const rect = this.canvas.getBoundingClientRect();
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
         const gridPos = this.snapToGrid(x, y);
         
-        // Check for space bar panning
-        if (this.isPanning) {
-            this.panStart = { x: e.clientX, y: e.clientY };
-            this.panStartOffset = { ...this.panOffset };
+        // Handle panning with middle mouse button or right-click
+        if (e.button === 1 || (e.button === 2 && !this.isDrawing)) { // Middle mouse or right-click
+            e.preventDefault();
+            this.startPanning(e.clientX, e.clientY, e.button === 1 ? 'middle' : 'right');
             return;
         }
         
+        // Handle left-click drawing and selection
+        if (e.button !== 0) return; // Only handle left mouse button for drawing/selection
+        
+        // Handle origin setting
         if (this.settingOrigin) {
             const oldOrigin = { ...this.origin };
             this.origin = { ...gridPos };
@@ -650,6 +813,7 @@ class ParametricDrawingApp {
             const entity = this.getEntityAt(worldX, worldY);
             
             if (entity) {
+                // Entity found - handle selection
                 if (this.isMultiSelecting) {
                     // Multi-selection with Shift
                     if (entity.type === 'polyline') {
@@ -686,22 +850,29 @@ class ParametricDrawingApp {
                     }
 
                     this.highlightEntityInJSON(entity.id, false);
-
+                }
+                
+                // Start dragging if entity is selected
+                if (this.selectedEntity === entity.id) {
                     this.isDragging = true;
+                    this.dragEntity = entity.id;
                     this.dragStart = { ...gridPos };
-                    this.dragEntity = entity;
                     this.canvas.style.cursor = 'move';
                     this.render();
                 }
             } else {
+                // No entity found - start panning on blank canvas
                 if (!this.isMultiSelecting) {
                     this.selectedEntity = null;
                     this.selectedSegment = null;
                     this.selectedItems = [];
                     this.clearMetadataEditor();
                     this.clearJSONHighlight();
-                    this.render();
                 }
+                
+                // Start panning with left-click on blank canvas
+                this.startPanning(e.clientX, e.clientY, 'left');
+                return;
             }
         } else if (this.currentTool === 'polyline') {
             if (!this.isDrawingPolyline) {
@@ -721,15 +892,104 @@ class ParametricDrawingApp {
         }
     }
     
+    // Smooth panning methods
+    startPanning(clientX, clientY, button) {
+        this.isPanning = true;
+        this.isPanningWithMouse = true;
+        this.panButton = button;
+        this.panStart = { x: clientX, y: clientY };
+        this.panStartOffset = { ...this.panOffset };
+        this.panVelocity = { x: 0, y: 0 };
+        this.lastPanTime = Date.now();
+        
+        // Set appropriate cursor
+        if (button === 'middle') {
+            this.canvas.style.cursor = 'grab';
+        } else if (button === 'right') {
+            this.canvas.style.cursor = 'grab';
+        } else if (button === 'left') {
+            this.canvas.style.cursor = 'grab';
+        }
+        
+        // Prevent context menu for right-click
+        if (button === 'right') {
+            this.canvas.addEventListener('contextmenu', this.preventDefault);
+        }
+    }
+    
+    stopPanning() {
+        if (!this.isPanning) return;
+        
+        this.isPanning = false;
+        this.isPanningWithMouse = false;
+        this.panStart = null;
+        this.panButton = null;
+        
+        // Reset cursor
+        this.canvas.style.cursor = this.currentTool === 'select' ? 'default' : 'crosshair';
+        
+        // Remove context menu prevention
+        this.canvas.removeEventListener('contextmenu', this.preventDefault);
+        
+        // Start smooth deceleration if there's velocity
+        if (Math.abs(this.panVelocity.x) > 0.1 || Math.abs(this.panVelocity.y) > 0.1) {
+            this.startPanDeceleration();
+        }
+    }
+    
+    preventDefault(e) {
+        e.preventDefault();
+    }
+    
+    startPanDeceleration() {
+        if (this.panAnimationId) {
+            cancelAnimationFrame(this.panAnimationId);
+        }
+        
+        const decelerate = () => {
+            const friction = 0.92; // Adjust for snappier or smoother deceleration
+            this.panVelocity.x *= friction;
+            this.panVelocity.y *= friction;
+            
+            this.panOffset.x += this.panVelocity.x;
+            this.panOffset.y += this.panVelocity.y;
+            
+            this.render();
+            
+            if (Math.abs(this.panVelocity.x) > 0.1 || Math.abs(this.panVelocity.y) > 0.1) {
+                this.panAnimationId = requestAnimationFrame(decelerate);
+            } else {
+                this.panVelocity = { x: 0, y: 0 };
+                this.panAnimationId = null;
+            }
+        };
+        
+        this.panAnimationId = requestAnimationFrame(decelerate);
+    }
+    
     handleMouseMove(e) {
         const rect = this.canvas.getBoundingClientRect();
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
         
-        // Handle panning
+        // Handle smooth panning (all types: left, middle, right, space)
         if (this.isPanning && this.panStart) {
-            this.panOffset.x = this.panStartOffset.x + (e.clientX - this.panStart.x);
-            this.panOffset.y = this.panStartOffset.y + (e.clientY - this.panStart.y);
+            const currentTime = Date.now();
+            const deltaTime = currentTime - this.lastPanTime;
+            
+            if (deltaTime > 0) {
+                const newPanX = this.panStartOffset.x + (e.clientX - this.panStart.x);
+                const newPanY = this.panStartOffset.y + (e.clientY - this.panStart.y);
+                
+                // Calculate velocity for smooth deceleration
+                this.panVelocity.x = (newPanX - this.panOffset.x) / deltaTime * 16; // 60fps normalization
+                this.panVelocity.y = (newPanY - this.panOffset.y) / deltaTime * 16;
+                
+                this.panOffset.x = newPanX;
+                this.panOffset.y = newPanY;
+                this.lastPanTime = currentTime;
+            }
+            
             this.render();
             return;
         }
@@ -743,24 +1003,44 @@ class ParametricDrawingApp {
         if (this.selectedItems.length > 1) {
             coordText += ` | 🔗 ${this.selectedItems.length} selected`;
         }
+        if (this.isPanning) {
+            coordText += ` | 🖱️ Panning`;
+        }
+        if (this.isDragging) {
+            coordText += ` | 🖱️ Dragging`;
+        }
         document.getElementById('coords').textContent = coordText;
         
+        // Handle entity dragging - this takes priority over other interactions
         if (this.isDragging && this.dragEntity) {
             const dx = (this.gridPos.x - this.dragStart.x) / this.gridSize;
             const dy = (this.gridPos.y - this.dragStart.y) / this.gridSize;
 
             if (dx !== 0 || dy !== 0) {
-                this.moveEntity(this.dragEntity, dx, dy);
-                this.dragStart = { ...this.gridPos };
-                this.updateJSON();
-                if (this.selectedEntity) {
-                    this.highlightEntityInJSON(this.selectedEntity, false);
+                // Find the actual entity object from the ID
+                const entity = this.entities.find(e => e.id === this.dragEntity);
+                if (entity) {
+                    this.moveEntity(entity, dx, dy);
+                    this.dragStart = { ...this.gridPos };
+                    this.updateJSON();
+                    if (this.selectedEntity) {
+                        this.highlightEntityInJSON(this.selectedEntity, false);
+                    }
+                    this.render();
                 }
-                this.render();
             }
-        } else if (this.isDrawing && this.tempShape) {
+            return; // Exit early when dragging
+        }
+        
+        // Handle drawing
+        if (this.isDrawing && this.tempShape) {
             this.tempShape.end = this.gridPos;
-        } else if (this.currentTool === 'select' && !this.isDragging) {
+            this.render();
+            return; // Exit early when drawing
+        }
+        
+        // Handle hover and selection feedback (only when not dragging or drawing)
+        if (this.currentTool === 'select' && !this.isDragging && !this.isPanning) {
             const worldX = (x - this.panOffset.x) / this.zoom;
             const worldY = (y - this.panOffset.y) / this.zoom;
             const entity = this.getEntityAt(worldX, worldY);
@@ -793,9 +1073,15 @@ class ParametricDrawingApp {
                 this.render();
             }
 
-            this.canvas.style.cursor = entity ? 'move' : 'default';
+            // Set cursor based on what's under the mouse
+            if (entity) {
+                this.canvas.style.cursor = 'move';
+            } else {
+                this.canvas.style.cursor = 'grab'; // Show pan cursor on blank canvas
+            }
         }
 
+        // Handle snap indicator
         const worldMouseX = (x - this.panOffset.x) / this.zoom;
         const worldMouseY = (y - this.panOffset.y) / this.zoom;
         const dist = Math.sqrt(
@@ -807,9 +1093,10 @@ class ParametricDrawingApp {
         this.render();
     }
     
-    handleMouseUp(e) {
-        if (this.isPanning) {
-            this.panStart = null;
+    async handleMouseUp(e) {
+        // Handle panning stop (all types: left, middle, right, space)
+        if (this.isPanning && this.isPanningWithMouse) {
+            this.stopPanning();
             return;
         }
         
@@ -817,23 +1104,32 @@ class ParametricDrawingApp {
             this.isDragging = false;
             this.dragEntity = null;
             this.canvas.style.cursor = this.currentTool === 'select' ? 'default' : 'crosshair';
+            
+            // Save state after dragging to persist position changes
+            if (this.stateManager) {
+                try {
+                    await this.stateManager.saveToAPI(true);
+                } catch (error) {
+                    console.error('Failed to save state after dragging:', error);
+                }
+            }
         } else if (this.isDrawing && this.tempShape) {
             this.isDrawing = false;
             
             if (this.currentTool !== 'polyline') {
                 this.saveState();
-                this.addEntity(this.tempShape);
+                await this.addEntity(this.tempShape);
             }
             
             this.tempShape = null;
         }
     }
     
-    handleDoubleClick(e) {
+    async handleDoubleClick(e) {
         if (this.currentTool === 'polyline' && this.isDrawingPolyline) {
             if (this.polylinePoints.length > 1) {
                 this.saveState();
-                this.addEntity({
+                await this.addEntity({
                     type: 'polyline',
                     points: [...this.polylinePoints],
                     closed: false
@@ -844,7 +1140,7 @@ class ParametricDrawingApp {
         }
     }
     
-    handleKeyDown(e) {
+    async handleKeyDown(e) {
         // Debug: Log key presses for troubleshooting
         if (e.key === '?' || e.key === 'h' || e.key === 'H') {
             console.log('Key pressed:', e.key, 'KeyCode:', e.keyCode, 'Prevented:', e.defaultPrevented);
@@ -865,8 +1161,11 @@ class ParametricDrawingApp {
         
         if (e.key === ' ') {
             e.preventDefault();
-            this.isPanning = true;
-            this.canvas.style.cursor = 'grab';
+            if (!this.isPanning) {
+                this.isPanning = true;
+                this.panButton = 'space';
+                this.canvas.style.cursor = 'grab';
+            }
         } else if (e.key === 'Escape') {
             this.isDrawingPolyline = false;
             this.polylinePoints = [];
@@ -876,18 +1175,18 @@ class ParametricDrawingApp {
         } else if (e.key === 'Delete') {
             if (this.selectedItems.length > 0) {
                 this.saveState();
-                this.selectedItems.forEach(item => {
-                    this.deleteEntity(item.entityId);
-                });
+                for (const item of this.selectedItems) {
+                    await this.deleteEntity(item.entityId);
+                }
                 this.selectedItems = [];
             } else if (this.selectedEntity) {
                 this.saveState();
-                this.deleteEntity(this.selectedEntity);
+                await this.deleteEntity(this.selectedEntity);
             }
         } else if (e.key === 'c' && this.currentTool === 'polyline' && this.isDrawingPolyline) {
             if (this.polylinePoints.length > 2) {
                 this.saveState();
-                this.addEntity({
+                await this.addEntity({
                     type: 'polyline',
                     points: [...this.polylinePoints],
                     closed: true
@@ -927,9 +1226,11 @@ class ParametricDrawingApp {
             }
         }
         if (e.key === ' ') {
-            this.isPanning = false;
-            this.panStart = null;
-            this.canvas.style.cursor = this.currentTool === 'select' ? 'default' : 'crosshair';
+            if (this.isPanning && this.panButton === 'space') {
+                this.isPanning = false;
+                this.panButton = null;
+                this.canvas.style.cursor = this.currentTool === 'select' ? 'default' : 'crosshair';
+            }
         }
     }
     
@@ -952,6 +1253,12 @@ View:
 D            Toggle dimensions
 Space        Pan view (hold)
 Scroll       Zoom in/out
+
+Panning:
+Left-Click Drag (blank)  Pan canvas (select tool)
+Middle Mouse Drag       Pan canvas
+Right-Click Drag        Pan canvas
+Space + Drag            Pan canvas
 
 Drawing:
 ESC          Cancel operation
@@ -1029,7 +1336,7 @@ C            Close polyline (while drawing)
         }
     }
     
-    addEntity(shape) {
+    async addEntity(shape) {
         const entity = {
             id: this.generateId(),
             type: shape.type,
@@ -1103,9 +1410,24 @@ C            Close polyline (while drawing)
                 break;
         }
         
-        this.entities.push(entity);
-        this.updateJSON();
-        this.render();
+        // Use central state manager if available
+        if (this.stateManager) {
+            try {
+                await this.stateManager.addEntity(entity, true);
+                console.log(`✅ Entity added via state manager: ${entity.id}`);
+            } catch (error) {
+                console.error('❌ Failed to add entity via state manager:', error);
+                // Fall back to local state
+                this.entities.push(entity);
+                this.updateJSON();
+                this.render();
+            }
+        } else {
+            // Fall back to local state
+            this.entities.push(entity);
+            this.updateJSON();
+            this.render();
+        }
     }
     
     selectEntity(entity) {
@@ -1686,26 +2008,66 @@ C            Close polyline (while drawing)
         return Math.sqrt(dx * dx + dy * dy);
     }
     
-    deleteEntity(entityId) {
-        this.entities = this.entities.filter(e => e.id !== entityId);
-        this.constraints = this.constraints.filter(c => 
-            !c.entities.includes(entityId)
-        );
-        this.selectedEntity = null;
-        this.selectedSegment = null;
-        this.updateJSON();
-        this.render();
+    async deleteEntity(entityId) {
+        // Use central state manager if available
+        if (this.stateManager) {
+            try {
+                await this.stateManager.removeEntity(entityId, true);
+                console.log(`✅ Entity removed via state manager: ${entityId}`);
+            } catch (error) {
+                console.error('❌ Failed to remove entity via state manager:', error);
+                // Fall back to local state
+                this.entities = this.entities.filter(e => e.id !== entityId);
+                this.constraints = this.constraints.filter(c => 
+                    !c.entities.includes(entityId)
+                );
+                this.selectedEntity = null;
+                this.selectedSegment = null;
+                this.updateJSON();
+                this.render();
+            }
+        } else {
+            // Fall back to local state
+            this.entities = this.entities.filter(e => e.id !== entityId);
+            this.constraints = this.constraints.filter(c => 
+                !c.entities.includes(entityId)
+            );
+            this.selectedEntity = null;
+            this.selectedSegment = null;
+            this.updateJSON();
+            this.render();
+        }
     }
     
-    clearDrawing() {
-        this.entities = [];
-        this.constraints = [];
-        this.selectedEntity = null;
-        this.selectedSegment = null;
-        this.selectedItems = [];
-        this.idCounter = 1;
-        this.updateJSON();
-        this.render();
+    async clearDrawing() {
+        // Use central state manager if available
+        if (this.stateManager) {
+            try {
+                await this.stateManager.clearEntities(true);
+                console.log('✅ Drawing cleared via state manager');
+            } catch (error) {
+                console.error('❌ Failed to clear drawing via state manager:', error);
+                // Fall back to local state
+                this.entities = [];
+                this.constraints = [];
+                this.selectedEntity = null;
+                this.selectedSegment = null;
+                this.selectedItems = [];
+                this.idCounter = 1;
+                this.updateJSON();
+                this.render();
+            }
+        } else {
+            // Fall back to local state
+            this.entities = [];
+            this.constraints = [];
+            this.selectedEntity = null;
+            this.selectedSegment = null;
+            this.selectedItems = [];
+            this.idCounter = 1;
+            this.updateJSON();
+            this.render();
+        }
     }
     
     render() {

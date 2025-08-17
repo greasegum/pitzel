@@ -1,6 +1,6 @@
 // API Client for Parametric Drawing Editor
 class DrawingAPIClient {
-    constructor(baseURL = 'https://pitzel.up.railway.app') {
+    constructor(baseURL = 'http://localhost:3001') {
         this.baseURL = baseURL;
     }
 
@@ -77,7 +77,7 @@ class DrawingAPIClient {
     }
 
     // Update JSON editor data
-    async updateEditorData(entities, constraints, metadata) {
+    async updateEditorData(entities, constraints, metadata, save = false) {
         try {
             const response = await fetch(`${this.baseURL}/api/editor/data`, {
                 method: 'POST',
@@ -87,13 +87,31 @@ class DrawingAPIClient {
                 body: JSON.stringify({
                     entities,
                     constraints,
-                    metadata
+                    metadata,
+                    save
                 })
             });
             
             return await response.json();
         } catch (error) {
             console.error('Error updating editor data:', error);
+            throw error;
+        }
+    }
+
+    // Save current editor data to persistent storage
+    async savePersistentData() {
+        try {
+            const response = await fetch(`${this.baseURL}/api/editor/save-persistent`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            });
+            
+            return await response.json();
+        } catch (error) {
+            console.error('Error saving persistent data:', error);
             throw error;
         }
     }
@@ -110,7 +128,7 @@ class DrawingAPIClient {
     }
 
     // Update canvas via chatbot action
-    async chatbotUpdateCanvas(action, data) {
+    async chatbotUpdateCanvas(action, data, save = false) {
         try {
             const response = await fetch(`${this.baseURL}/api/chatbot/update-canvas`, {
                 method: 'POST',
@@ -119,7 +137,8 @@ class DrawingAPIClient {
                 },
                 body: JSON.stringify({
                     action,
-                    data
+                    data,
+                    save
                 })
             });
             
